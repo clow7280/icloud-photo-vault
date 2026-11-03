@@ -1,0 +1,23 @@
+#!/bin/bash
+source "$(dirname "$0")/common"
+
+case "$1" in
+start)
+    # 容器由应用中心按 Docker 项目启动，这里只确认目录和镜像已经就绪
+    prepare_dirs
+    load_image
+    exit 0
+    ;;
+stop)
+    exit 0
+    ;;
+status)
+    if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = "true" ]; then
+        exit 0
+    fi
+    exit 3
+    ;;
+*)
+    exit 1
+    ;;
+esac

@@ -1,0 +1,10 @@
+{
+  "docker-project": {
+    "projects": [
+      {
+        "name": "icloud-photo-vault",
+        "path": "docker"
+      }
+    ]
+  }
+}

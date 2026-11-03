@@ -1,0 +1,15 @@
+appname=icloud-photo-vault
+version=@VERSION@
+display_name=iCloud 照片保管库
+desc=把多个 iCloud 账号的照片备份到 NAS，加密归档后由百度网盘同步，并按规则释放 iCloud 空间。
+source=thirdparty
+platform=x86
+maintainer=clow
+distributor=clow
+os_min_version=1.2.0
+install_type=root
+desktop_uidir=ui
+desktop_applaunchname=icloud-photo-vault.main
+ctl_stop=true
+checkport=false
+disable_authorization_path=true

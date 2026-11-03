@@ -1,0 +1,7 @@
+#!/bin/bash
+# 只移除镜像，备份目录、归档目录、数据库和归档密码都保留
+source "$(dirname "$0")/common"
+docker images "$IMAGE_REPO" --format '{{.Repository}}:{{.Tag}}' | while read -r image; do
+    docker rmi "$image" > /dev/null 2>&1 || true
+done
+exit 0

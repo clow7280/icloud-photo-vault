@@ -1,0 +1,23 @@
+# 宿主机目录与 cmd/common 中的定义保持一致
+services:
+  vault:
+    image: icloud-photo-vault:@VERSION@
+    pull_policy: never
+    container_name: icloud-photo-vault
+    restart: unless-stopped
+    environment:
+      # 以 root 启动，绑定网关 Socket 后降权到 1000:1001，备份出来的照片属于 NAS 的第一个用户
+      VAULT_RUN_UID: "1000"
+      VAULT_RUN_GID: "1001"
+      VAULT_SOCKET: /app/target/app.sock
+      VAULT_BASE_PATH: /app/icloud-photo-vault
+      VAULT_REQUIRE_ADMIN: "1"
+      VAULT_BACKUP_ROOT: /data/backup
+      VAULT_ARCHIVE_ROOT: /data/archive
+      VAULT_STATE_DIR: /data/private/state
+      VAULT_STAGING_DIR: /data/private/staging
+    volumes:
+      - "${TRIM_APPDEST}:/app/target:rw"
+      - "/vol2/1000/Photos/iCloud:/data/backup:rw"
+      - "/vol3/1000/4-Archives/icloud-photo-vault:/data/archive:rw"
+      - "/vol3/1000/4-Archives/.icloud-photo-vault:/data/private:rw"

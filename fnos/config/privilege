@@ -1,0 +1,7 @@
+{
+  "defaults": {
+    "run-as": "root"
+  },
+  "username": "icloud-photo-vault",
+  "groupname": "icloud-photo-vault"
+}

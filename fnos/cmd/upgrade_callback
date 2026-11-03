@@ -1,0 +1,6 @@
+#!/bin/bash
+source "$(dirname "$0")/common"
+prepare_dirs
+load_image
+remove_other_images
+exit 0

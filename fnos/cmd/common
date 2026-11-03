@@ -1,0 +1,81 @@
+#!/bin/bash
+# 生命周期脚本共用的定义，由 fnOS 以 root 身份调用
+
+IMAGE="icloud-photo-vault:@VERSION@"
+IMAGE_REPO="icloud-photo-vault"
+IMAGE_FILE_NAME="icloud-photo-vault-image.tar.gz"
+CONTAINER="icloud-photo-vault"
+RUN_UID=1000
+RUN_GID=1001
+
+# 与 app/docker/docker-compose.yaml 中挂载的宿主机目录保持一致
+BACKUP_DIR="/vol2/1000/Photos/iCloud"
+ARCHIVE_DIR="/vol3/1000/4-Archives/icloud-photo-vault"
+PRIVATE_DIR="/vol3/1000/4-Archives/.icloud-photo-vault"
+
+fail() {
+    echo "$1" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+    exit 1
+}
+
+# 只创建缺少的目录，已有目录的属主和权限保持不变
+ensure_dir() {
+    local dir="$1" mode="$2"
+    if [ ! -d "$dir" ]; then
+        mkdir -p "$dir" || fail "无法创建目录 $dir"
+        chown "$RUN_UID:$RUN_GID" "$dir" || fail "无法设置 $dir 的属主"
+        chmod "$mode" "$dir"
+    fi
+}
+
+# 容器挂载这些目录，必须在应用中心启动容器之前准备好，否则 Docker 会以 root 身份自动创建
+prepare_dirs() {
+    [ -d "/vol2/1000/Photos" ] || fail "找不到 /vol2/1000/Photos，请确认照片目录存在"
+    [ -d "/vol3/1000/4-Archives" ] || fail "找不到 /vol3/1000/4-Archives，请确认归档目录存在"
+    ensure_dir "$BACKUP_DIR" 755
+    ensure_dir "$ARCHIVE_DIR" 755
+    ensure_dir "$PRIVATE_DIR" 700
+}
+
+# 安装和升级时，应用中心在 *_callback 之前就会启动容器，所以 *_init 阶段就要导入镜像。
+# 这时应用文件可能还没放到 TRIM_APPDEST，需要到安装包的解压目录里找。
+find_image_source() {
+    local dir found
+    for dir in "${TRIM_APPDEST:-}/docker" "${TRIM_TEMP_TPKFILE:-}" "${TRIM_PKGINST_TEMP_DIR:-}" "${TRIM_TEMP_UPGRADE_FOLDER:-}"; do
+        [ -n "$dir" ] && [ -d "$dir" ] || continue
+        found=$(find "$dir" -maxdepth 4 -name "$IMAGE_FILE_NAME" -print -quit 2>/dev/null)
+        if [ -n "$found" ]; then
+            echo "file:$found"
+            return
+        fi
+        found=$(find "$dir" -maxdepth 3 -name app.tgz -print -quit 2>/dev/null)
+        if [ -n "$found" ]; then
+            echo "tgz:$found"
+            return
+        fi
+    done
+}
+
+load_image() {
+    docker image inspect "$IMAGE" > /dev/null 2>&1 && return 0
+    local source
+    source=$(find_image_source)
+    case "$source" in
+    file:*)
+        docker load -i "${source#file:}" > /dev/null || fail "导入镜像 $IMAGE 失败"
+        ;;
+    tgz:*)
+        tar -xzOf "${source#tgz:}" "docker/$IMAGE_FILE_NAME" | docker load > /dev/null || fail "导入镜像 $IMAGE 失败"
+        ;;
+    *)
+        fail "找不到镜像文件 $IMAGE_FILE_NAME（TRIM_APPDEST=${TRIM_APPDEST:-} TRIM_TEMP_TPKFILE=${TRIM_TEMP_TPKFILE:-} TRIM_PKGINST_TEMP_DIR=${TRIM_PKGINST_TEMP_DIR:-}）"
+        ;;
+    esac
+    docker image inspect "$IMAGE" > /dev/null 2>&1 || fail "导入后仍然找不到镜像 $IMAGE"
+}
+
+remove_other_images() {
+    docker images "$IMAGE_REPO" --format '{{.Repository}}:{{.Tag}}' | while read -r image; do
+        [ "$image" = "$IMAGE" ] || docker rmi "$image" > /dev/null 2>&1 || true
+    done
+}

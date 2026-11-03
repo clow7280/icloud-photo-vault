@@ -1,0 +1,17 @@
+{
+  ".url": {
+    "icloud-photo-vault.main": {
+      "title": "iCloud 照片保管库",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "",
+      "gatewayPrefix": "/app/icloud-photo-vault",
+      "gatewaySocket": "app.sock",
+      "url": "/app/icloud-photo-vault/",
+      "allUsers": false,
+      "control": {
+        "accessPerm": "readonly"
+      }
+    }
+  }
+}
