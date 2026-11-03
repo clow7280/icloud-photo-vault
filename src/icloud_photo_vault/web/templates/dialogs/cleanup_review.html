@@ -1,0 +1,61 @@
+{#- 空间清理的核对对话框：manual 人工删除所选月份，auto 查看下一轮自动清理清单 -#}
+{%- set back_url = base ~ "/cleanup?account=" ~ account.id ~ ("&months=" ~ (selected_months | join("&months=")) if review == "manual" else "") %}
+{%- set one_copy = deletable - two_copies %}
+<div class="modal-backdrop">
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-head">
+      <h2 id="modal-title">{{ "确认从 iCloud 删除" if review == "manual" else "下一轮自动清理清单" }}</h2>
+      <a class="icon-btn" href="{{ back_url }}" data-close aria-label="关闭">×</a>
+    </div>
+    <div class="modal-body">
+      {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+      {% if review == "manual" %}
+      <p class="lead">{{ account.name }} · {{ selected_months | month_ranges }}</p>
+      <div class="stats compact">
+        <div><div class="label">所选月份的照片</div><div class="value">{{ item_total }}</div></div>
+        <div><div class="label">将删除</div><div class="value">{{ deletable }}</div><div class="sub">{{ deletable_bytes | bytes }}</div></div>
+        <div><div class="label">只有 NAS 一份</div><div class="value {{ 'warn' if one_copy }}">{{ one_copy }}</div></div>
+        <div><div class="label">未备份，不会删除</div><div class="value {{ 'bad' if item_total - deletable }}">{{ item_total - deletable }}</div></div>
+      </div>
+      {% if one_copy %}<div class="alert warn">其中 {{ one_copy }} 张还没有进归档包，删除后只在 NAS 上有一份。</div>{% endif %}
+      {% else %}
+      <p class="lead">{{ account.name }} · 早于 {{ cutoff_month }} 且有两份副本 · {{ item_total }} 张，{{ deletable_bytes | bytes }}{% if item_total >= limit %}，已达每轮上限{% endif %}</p>
+      <p class="note">{% if mode == "on" %}下一轮完整运行时会删除这些照片。{% elif mode == "report" %}当前只生成报告，不会删除。{% else %}自动清理已关闭。{% endif %}删除前会逐张重新检查副本。</p>
+      {% endif %}
+      <div class="table-wrap review-list">
+      <table>
+        <thead><tr><th>拍摄时间</th><th>文件名</th>{% if review == "manual" %}<th>副本</th><th>说明</th>{% endif %}</tr></thead>
+        <tbody>
+        {% for c in items %}
+        <tr>
+          <td>{{ c.taken_at | local }}</td>
+          <td>{{ c.filename }}</td>
+          {% if review == "manual" %}
+          <td>{% if c.copies == 2 %}<span class="badge ok">两份</span>{% elif c.copies == 1 %}<span class="badge warn">一份</span>{% else %}<span class="badge bad">未备份</span>{% endif %}</td>
+          <td class="muted wrap">{{ c.problem or "" }}</td>
+          {% endif %}
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="empty">没有符合条件的照片</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% if item_total > preview_rows %}<p class="note">只列出前 {{ preview_rows }} 张。</p>{% endif %}
+    </div>
+    <div class="modal-foot">
+      {% if review == "manual" and deletable %}
+      <form id="delete-form" method="post" action="{{ base }}/cleanup/delete" class="grow" data-busy="正在提交…">
+        <input type="hidden" name="account" value="{{ account.id }}">
+        {% for m in selected_months %}<input type="hidden" name="months" value="{{ m }}">{% endfor %}
+        <input type="hidden" name="expected" value="{{ deletable }}">
+        <label class="check"><input type="checkbox" name="confirm" value="yes" required> 我已核对清单，确认删除这 {{ deletable }} 张</label>
+      </form>
+      <a class="btn" href="{{ back_url }}">取消</a>
+      <button type="submit" form="delete-form" class="danger">确认删除</button>
+      {% else %}
+      <a class="btn" href="{{ back_url }}">关闭</a>
+      {% endif %}
+    </div>
+  </div>
+</div>

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}日志 · iCloud 照片保管库{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>日志</h1>
+    <p class="subtitle">{% if view == "events" %}在界面上做过的重要操作，长期保存。{% elif view == "tasks" %}最近 20 个任务，服务重启后清空。{% else %}每一张从 iCloud 删除的照片，长期保存。{% endif %}</p>
+  </div>
+  <nav class="segmented">
+    {% for key, label in views.items() %}<a href="{{ base }}/log?view={{ key }}" class="{{ 'active' if view == key }}">{{ label }}</a>{% endfor %}
+  </nav>
+</div>
+
+<div class="card flush fill">
+  <div class="table-wrap">
+  <table>
+    {% if view == "events" %}
+    <thead><tr><th>时间</th><th>操作</th><th>内容</th><th>操作人</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.created_at | local }}</td>
+      <td><span class="badge {{ 'bad' if r.action == '人工删除' else 'info' if r.action in ('清理规则', '归档密码') else '' }}">{{ r.action }}</span></td>
+      <td class="wrap">{{ r.detail }}</td>
+      <td class="muted">{{ r.actor or "—" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="empty">还没有操作记录</td></tr>
+    {% endfor %}
+    </tbody>
+    {% elif view == "tasks" %}
+    <thead><tr><th>任务</th><th>开始</th><th>结束</th><th>结果</th></tr></thead>
+    <tbody>
+    {% for job in rows %}
+    <tr>
+      <td>{{ job.name }} {% if job.ok %}<span class="badge ok">完成</span>{% else %}<span class="badge bad">失败</span>{% endif %}</td>
+      <td>{{ job.started_at | local }}</td>
+      <td>{{ job.finished_at | local }}</td>
+      <td class="wrap"><pre class="summary">{{ job.summary }}</pre></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="empty">服务启动以来还没有运行过任务</td></tr>
+    {% endfor %}
+    </tbody>
+    {% else %}
+    <thead><tr><th>时间</th><th>账号</th><th>文件名</th><th>拍摄时间</th><th>方式</th><th>结果</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.created_at | local }}</td><td>{{ r.account_name }}</td><td>{{ r.filename }}</td><td>{{ r.taken_at | local }}</td>
+      <td>{{ "自动清理" if r.mode == "auto" else "人工删除" }}</td>
+      <td>{% if r.result == "ok" %}<span class="badge ok">已删除</span>{% else %}<span class="badge bad" title="{{ r.error }}">失败</span>{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="empty">还没有删除记录</td></tr>
+    {% endfor %}
+    </tbody>
+    {% endif %}
+  </table>
+  </div>
+</div>
+{% endblock %}

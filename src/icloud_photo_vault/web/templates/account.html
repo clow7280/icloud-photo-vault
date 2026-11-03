@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}{{ account.name }} · iCloud 照片保管库{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ account.name }}</h1>
+    <p class="subtitle">{{ account.apple_id }} · 上次同步 {{ account.last_sync_at | local }}</p>
+  </div>
+  <div class="actions">
+    {% if account.auth_state == "ok" %}
+    <form method="post" action="{{ base }}/jobs/sync/{{ account.id }}" data-busy="正在提交…"><button type="submit" class="primary">立即同步</button></form>
+    {% endif %}
+  </div>
+</div>
+
+{% if account.last_sync_error %}<div class="alert bad">上次同步的问题：{{ account.last_sync_error }}</div>{% endif %}
+
+{% if awaiting_code %}
+<div class="card">
+  <div class="steps"><span class="done">1 输入密码</span><span class="current">2 输入验证码</span></div>
+  <h3>输入双重认证验证码</h3>
+  <p class="note">验证码会出现在这个 Apple ID 登录的 iPhone、iPad 或 Mac 上。账号不是你的，请让账号主人把验证码告诉你。</p>
+  <form method="post" action="{{ base }}/accounts/{{ account.id }}/code" class="form-row" style="margin-top: 10px" data-busy="正在验证…">
+    <input class="code" name="code" required inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" autofocus placeholder="000000">
+    <button type="submit" class="primary">验证</button>
+    <a href="{{ base }}/accounts/{{ account.id }}">重新输入密码</a>
+  </form>
+  {% if fake %}<p class="note">模拟模式的验证码是 123456。</p>{% endif %}
+</div>
+{% elif account.auth_state != "ok" %}
+<div class="card">
+  <div class="steps"><span class="current">1 输入密码</span><span>2 输入验证码</span></div>
+  <h3>登录 iCloud</h3>
+  <p class="note">连接 iCloud 需要几秒钟。密码只用于这一次登录，不会保存。</p>
+  <form method="post" action="{{ base }}/accounts/{{ account.id }}/login" class="form-row" style="margin-top: 10px" data-busy="正在连接 iCloud…">
+    <label class="field"><span>Apple ID 密码</span><input name="password" type="password" required autocomplete="off" autofocus></label>
+    <button type="submit" class="primary">下一步</button>
+  </form>
+</div>
+{% endif %}
+<div class="row">
+{% if account.auth_state == "ok" and not awaiting_code %}
+<details class="card">
+  <summary><span class="badge ok">已登录</span> <span class="muted small">重新登录</span></summary>
+  <form method="post" action="{{ base }}/accounts/{{ account.id }}/login" class="form-row" data-busy="正在连接 iCloud…">
+    <label class="field grow"><span>Apple ID 密码</span><input name="password" type="password" required autocomplete="off"></label>
+    <button type="submit">重新登录</button>
+  </form>
+</details>
+{% endif %}
+
+<details class="card">
+  <summary><span class="muted small">改名</span></summary>
+  <form method="post" action="{{ base }}/accounts/{{ account.id }}/rename" class="form-row" data-busy="正在改名…">
+    <label class="field grow"><span>新名称，备份目录和归档包会一起改名</span><input name="name" required maxlength="32" value="{{ account.name }}"></label>
+    <button type="submit">改名</button>
+  </form>
+</details>
+</div>
+
+<div class="card flush fill">
+  <div class="card-title"><h3>按月统计</h3><p class="note">统计只读数据库，删除前会再逐张检查 NAS 上的文件。</p></div>
+  <div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th>月份</th><th class="num">iCloud 中</th><th>已备份</th><th class="num">两份副本</th>
+      <th class="num">已删除</th><th class="num">用户自行删除</th><th class="num">iCloud 占用</th><th class="num">NAS 占用</th><th>归档</th>
+    </tr></thead>
+    <tbody>
+    {% if months %}
+    <tr class="total">
+      <td>合计</td><td class="num">{{ total.in_icloud }}</td><td>{{ total.backed_up }}</td><td class="num">{{ total.two_copies }}</td>
+      <td class="num">{{ total.deleted }}</td><td class="num">{{ total.gone }}</td><td class="num">{{ total.icloud_bytes | bytes }}</td><td class="num">{{ total.nas_bytes | bytes }}</td><td></td>
+    </tr>
+    {% endif %}
+    {% for m in months %}
+    {% set pct = (100 * m.backed_up / m.in_icloud) | round | int if m.in_icloud else 100 %}
+    <tr>
+      <td>{{ "没有拍摄日期" if m.month == "unknown" else m.month }}</td>
+      <td class="num">{{ m.in_icloud }}</td>
+      <td><span class="bar{{ ' partial' if pct < 100 }}"><span style="width: {{ pct }}%"></span></span>{{ m.backed_up }}</td>
+      <td class="num">{{ m.two_copies }}</td>
+      <td class="num">{{ m.deleted }}</td>
+      <td class="num">{{ m.gone }}</td>
+      <td class="num">{{ m.icloud_bytes | bytes }}</td>
+      <td class="num">{{ m.nas_bytes | bytes }}</td>
+      <td>{% if m.archive %}<span class="badge ok" title="{{ m.archive.verified_at | local }} 校验通过">v{{ m.archive.version }}</span>{% else %}<span class="badge">未归档</span>{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9" class="empty">还没有同步过照片</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,78 @@
+{#- 添加账号向导：info 填写账号，password 输入密码，code 输入验证码，done 完成 -#}
+{%- set order = ["info", "password", "code", "done"] %}
+{%- set labels = {"info": "账号信息", "password": "Apple ID 密码", "code": "验证码", "done": "完成"} %}
+<div class="modal-backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-head">
+      <h2 id="modal-title">添加账号</h2>
+      {% if step in ("password", "code") %}
+      <form method="post" action="{{ base }}/accounts/{{ new_account.id }}/discard" data-confirm="取消添加 {{ new_account.name }}？已填写的信息会被删除。">
+        <button type="submit" class="icon-btn" data-close aria-label="取消添加">×</button>
+      </form>
+      {% else %}
+      <a class="icon-btn" href="{{ base }}/{{ 'accounts/' ~ new_account.id if step == 'done' else '' }}" data-close aria-label="关闭">×</a>
+      {% endif %}
+    </div>
+    <ol class="wizard">
+      {% for s in order %}
+      <li class="{{ 'current' if s == step else 'done' if order.index(s) < order.index(step) }}">{{ labels[s] }}</li>
+      {% endfor %}
+    </ol>
+    <div class="modal-body">
+      {% if message %}<div class="alert ok">{{ message }}</div>{% endif %}
+      {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+
+      {% if step == "info" %}
+      <form id="step-form" method="post" action="{{ base }}/accounts" class="form-stack" data-busy="正在添加…">
+        <label class="field"><span>名称，用作备份目录名，建议用账号主人的名字</span>
+          <input name="name" required maxlength="32" placeholder="例如 clow" value="{{ form.name or '' }}" autofocus></label>
+        <label class="field"><span>Apple ID</span>
+          <input name="apple_id" required placeholder="name@example.com" autocomplete="off" value="{{ form.apple_id or '' }}"></label>
+        <label class="field"><span>区域</span>
+          <select name="domain">
+            <option value="cn" {{ "selected" if form.domain != "com" }}>中国大陆（云上贵州）</option>
+            <option value="com" {{ "selected" if form.domain == "com" }}>其他地区</option>
+          </select>
+        </label>
+      </form>
+
+      {% elif step == "password" %}
+      <p class="lead">输入 <strong>{{ new_account.apple_id }}</strong> 的密码。</p>
+      <p class="note">连接 iCloud 需要几秒钟。密码只用于这一次登录，不会保存。</p>
+      <form id="step-form" method="post" action="{{ base }}/accounts/{{ new_account.id }}/login" class="form-stack" data-busy="正在连接 iCloud…">
+        <input type="hidden" name="flow" value="new">
+        <label class="field"><span>Apple ID 密码</span><input name="password" type="password" required autocomplete="off" autofocus></label>
+      </form>
+
+      {% elif step == "code" %}
+      <p class="lead">输入双重认证验证码。</p>
+      <p class="note">验证码会出现在这个 Apple ID 登录的 iPhone、iPad 或 Mac 上。账号不是你的，请让账号主人把验证码告诉你。</p>
+      <form id="step-form" method="post" action="{{ base }}/accounts/{{ new_account.id }}/code" class="form-stack" data-busy="正在验证…">
+        <input type="hidden" name="flow" value="new">
+        <input class="code" name="code" required inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" autofocus placeholder="000000">
+      </form>
+      {% if fake %}<p class="note">模拟模式的验证码是 123456。</p>{% endif %}
+
+      {% else %}
+      <div class="done-mark">✓</div>
+      <p class="lead center">已添加 <strong>{{ new_account.name }}</strong></p>
+      <p class="note center">第一次同步会下载全部照片，可能需要较长时间，进度显示在底部状态栏。</p>
+      {% endif %}
+    </div>
+    <div class="modal-foot">
+      {% if step == "info" %}
+      <a class="btn" href="{{ base }}/" data-close>取消</a>
+      <button type="submit" form="step-form" class="primary">下一步</button>
+      {% elif step == "password" %}
+      <span class="grow"></span>
+      <button type="submit" form="step-form" class="primary">下一步</button>
+      {% elif step == "code" %}
+      <a class="btn" href="{{ base }}/accounts/new?step=password&amp;id={{ new_account.id }}">重新输入密码</a>
+      <button type="submit" form="step-form" class="primary">验证</button>
+      {% else %}
+      <a class="btn" href="{{ base }}/">完成</a>
+      <a class="btn primary" href="{{ base }}/accounts/{{ new_account.id }}">查看账号</a>
+      {% endif %}
+    </div>
+  </div>
+</div>

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}设置 · iCloud 照片保管库{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>设置</h1></div></div>
+
+<div class="columns">
+<div>
+<div class="card">
+  <h3>归档密码</h3>
+  {% if password_set %}
+  <p class="note"><span class="badge ok">已设置</span> 密码不能在这里修改，丢失密码就无法解开归档包。</p>
+  {% else %}
+  <p class="note">归档包用这个密码加密，设置后不能修改。请先把密码保存到密码管理器里。</p>
+  <form method="post" action="{{ base }}/settings/password" class="form-row" style="margin-top: 10px" data-busy="正在保存…">
+    <label class="field"><span>密码，至少 12 个字符</span><input type="password" name="password" required minlength="12" autocomplete="new-password"></label>
+    <label class="field"><span>再输入一次</span><input type="password" name="again" required minlength="12" autocomplete="new-password"></label>
+    <button type="submit" class="primary">设置</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>运行</h3>
+  <form method="post" action="{{ base }}/settings" class="form-row" style="margin-top: 10px" data-busy="正在保存…">
+    <label class="field"><span>完整运行间隔（小时）</span><input type="number" name="interval" value="{{ interval }}" min="1" max="720" style="width: 9em"></label>
+    <label class="field"><span>归档分卷大小（MB）</span><input type="number" name="volume_mb" value="{{ volume_mb }}" min="100" max="100000" style="width: 9em"></label>
+    <button type="submit" class="primary">保存</button>
+  </form>
+</div>
+
+</div>
+<div>
+<div class="card">
+  <h3>目录</h3>
+  <dl class="kv">
+    <dt>备份目录</dt><dd>{{ cfg.backup_root }}</dd>
+    <dt>归档目录</dt><dd>{{ cfg.archive_root }}</dd>
+    <dt>暂存目录</dt><dd>{{ cfg.staging_dir }}</dd>
+    <dt>时区</dt><dd>{{ cfg.timezone }}</dd>
+  </dl>
+  <p class="note">这里显示的是容器内的路径。</p>
+</div>
+</div>
+</div>
+{% endblock %}

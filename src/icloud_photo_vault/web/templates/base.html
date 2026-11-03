@@ -1,0 +1,64 @@
+{%- macro icon(name) -%}
+<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+{%- if name == "overview" -%}<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>
+{%- elif name == "account" -%}<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/>
+{%- elif name == "plus" -%}<path d="M12 6v12M6 12h12"/>
+{%- elif name == "cleanup" -%}<path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5H12z"/><path d="M15 3.9a8.5 8.5 0 0 1 5.1 5.1H15z"/>
+{%- elif name == "log" -%}<path d="M8.5 6.5h11M8.5 12h11M8.5 17.5h11M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01"/>
+{%- elif name == "settings" -%}<circle cx="12" cy="12" r="3"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4 18 18M6 18l1.6-1.6M16.4 7.6 18 6"/>
+{%- endif -%}
+</svg>
+{%- endmacro -%}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}iCloud 照片保管库{% endblock %}</title>
+<link rel="icon" href="{{ base }}/static/icon.png">
+<link rel="stylesheet" href="{{ base }}/static/app.css?v={{ version }}">
+<script src="{{ base }}/static/app.js?v={{ version }}" defer></script>
+</head>
+<body data-status-url="{{ base }}/api/status" data-job-running="{{ '1' if jobs.current else '0' }}">
+<div class="layout">
+<aside class="sidebar">
+  <nav class="nav">
+    <a href="{{ base }}/" class="{{ 'active' if active == 'overview' }}">{{ icon("overview") }}<span class="label">总览</span></a>
+    <div class="nav-section">账号<a class="nav-add" href="{{ base }}/accounts/new" title="添加账号" aria-label="添加账号">{{ icon("plus") }}</a></div>
+    {% for a in nav_accounts %}
+    <a href="{{ base }}/accounts/{{ a.id }}" class="{{ 'active' if active == 'account-' ~ a.id }}" title="{{ a.apple_id }}">
+      {{ icon("account") }}<span class="label">{{ a.name }}</span>
+      {% if a.auth_state != "ok" %}<span class="dot" title="需要登录"></span>{% endif %}
+    </a>
+    {% endfor %}
+    {% if not nav_accounts %}<a href="{{ base }}/accounts/new" class="muted">{{ icon("plus") }}<span class="label">添加账号</span></a>{% endif %}
+    <div class="nav-section">管理</div>
+    <a href="{{ base }}/cleanup" class="{{ 'active' if active == 'cleanup' }}">{{ icon("cleanup") }}<span class="label">空间清理</span></a>
+    <a href="{{ base }}/log" class="{{ 'active' if active == 'log' }}">{{ icon("log") }}<span class="label">日志</span></a>
+    <a href="{{ base }}/settings" class="{{ 'active' if active == 'settings' }}">{{ icon("settings") }}<span class="label">设置</span></a>
+  </nav>
+</aside>
+<main class="content">
+  {% if not dialog %}
+  {% if message %}<div class="alert ok">{{ message }}</div>{% endif %}
+  {% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+  {% endif %}
+  {% block content %}{% endblock %}
+</main>
+<footer class="statusbar">
+  {%- set need_login = status.accounts.total - status.accounts.logged_in %}
+  <div id="sb-job" class="sb-item grow">
+    {%- if status.running %}
+    <span id="sb-job-icon" class="spinner"></span><span id="sb-job-text">{{ status.name }}{% if status.syncing and status.syncing.total > 1 %} · 正在同步第 {{ status.syncing.index }}/{{ status.syncing.total }} 个账号{% endif %}{% if status.progress %} · {{ status.progress }}{% endif %}</span>
+    {%- else %}
+    <span id="sb-job-icon" class="dot {{ 'bad' if status.last and not status.last.ok else 'ok' }}"></span><span id="sb-job-text">空闲{% if status.last %} · 上次任务：{{ status.last.name }}{{ "完成" if status.last.ok else "失败" }}{% endif %}</span>
+    {%- endif %}
+  </div>
+  <div id="sb-accounts" class="sb-item">{{ status.accounts.total }} 个账号 · {{ status.accounts.logged_in }} 个已登录{% if need_login %} · <span class="warn">{{ need_login }} 个需要登录</span>{% endif %}</div>
+  <div id="sb-next" class="sb-item">下次自动运行 {{ status.next_cycle or "即将开始" }}</div>
+  <div class="sb-item muted">{% if fake %}模拟数据 · {% endif %}v{{ version }}</div>
+</footer>
+</div>
+{% if dialog %}{% include dialog %}{% endif %}
+</body>
+</html>
