@@ -1,0 +1,40 @@
+[project]
+name = "icloud-photo-vault"
+version = "0.1.2"
+description = "把多个 iCloud 账号的照片备份到 NAS，加密归档，并按规则释放 iCloud 空间"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "icloudpd==1.32.3",
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.12",
+]
+
+[project.scripts]
+icloud-photo-vault = "icloud_photo_vault.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/icloud_photo_vault"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:anyio"
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient` is deprecated"]
+
+[tool.uv.sources]
+# PyPI 上平台专用的轮子只含打包好的可执行文件，没有 Python 模块，所以固定使用纯 Python 轮子
+icloudpd = { url = "https://files.pythonhosted.org/packages/b9/73/20544e68569fce262d596ebe42730aac235b8e69a36edefebdf8cfa85508/icloudpd-1.32.3-py3-none-any.whl" }
