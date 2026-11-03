@@ -41,7 +41,17 @@ class RemoteAsset:
     xmp: bytes | None = None
 
 
+@dataclass(frozen=True)
+class LibraryCount:
+    """iCloud 照片库的数量，total 包括视频，实况照片算一张。"""
+
+    total: int
+    videos: int
+
+
 class PhotoSource(Protocol):
+    def count(self) -> LibraryCount: ...
+
     def iter_assets(self) -> Iterator[RemoteAsset]: ...
 
     def download(self, asset: RemoteAsset, role: str) -> Iterator[bytes]: ...
@@ -144,6 +154,10 @@ class FakeLibrary:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
             data = {"deleted": sorted(self.deleted), "logged_in": self.logged_in}
             self.state_file.write_text(json.dumps(data))
+
+    def count(self) -> LibraryCount:
+        live = [a for a in self.assets if a.record_name not in self.deleted]
+        return LibraryCount(len(live), sum(1 for a in live if a.item_type == "movie"))
 
     def iter_assets(self) -> Iterator[RemoteAsset]:
         for asset in self.assets:

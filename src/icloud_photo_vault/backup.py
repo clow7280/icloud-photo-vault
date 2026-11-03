@@ -276,6 +276,20 @@ def sync_account(
     account_dir.mkdir(parents=True, exist_ok=True)
     seen: set[str] = set()
     now = utcnow()
+    # 先查总数，进度才有分母；查不到时照常同步
+    try:
+        count = source.count()
+    except SourceError as e:
+        log.warning("%s 查询照片数量失败：%s", account["name"], e)
+        of_total = ""
+    else:
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE accounts SET icloud_total = ?, icloud_videos = ?, counted_at = ? WHERE id = ?",
+                (count.total, count.videos, now, account_id),
+            )
+        of_total = f" / {count.total}"
+        progress(f"{account['name']}：iCloud 共 {count.total} 张，其中视频 {count.videos} 个，开始检查")
     for asset in source.iter_assets():
         result.listed += 1
         seen.add(asset.asset_id)
@@ -291,7 +305,7 @@ def sync_account(
         result.downloaded += files
         result.downloaded_bytes += size
         if result.listed % 50 == 0:
-            progress(f"{account['name']}：已检查 {result.listed} 张，下载 {result.downloaded} 个文件")
+            progress(f"{account['name']}：已检查 {result.listed}{of_total} 张，下载 {result.downloaded} 个文件")
 
     # 只有完整列完照片库之后，才能判断哪些照片已经不在 iCloud 里
     seen.update(getattr(source, "unreadable", ()))

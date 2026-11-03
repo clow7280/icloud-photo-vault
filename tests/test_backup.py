@@ -118,3 +118,27 @@ def test_assets_removed_from_icloud_are_marked_gone(db, cfg, account, library):
         states = dict(conn.execute("SELECT asset_id, state FROM assets").fetchall())
     assert states == {"a1": "in_icloud", "a2": "gone"}
     assert (cfg.backup_root / "alice" / "2023/05/IMG_0002.HEIC").exists()
+
+
+def test_sync_records_icloud_count_and_reports_progress(db, cfg, account, library):
+    for i in range(60):
+        name = f"IMG_{i:04d}.MOV" if i % 10 == 0 else f"IMG_{i:04d}.HEIC"
+        make_asset(library, f"a{i}", name, datetime(2023, 5, 1, tzinfo=UTC))
+    messages = []
+    sync_account(db, cfg.backup_root, cfg.timezone, account, library, messages.append)
+    with db.connect() as conn:
+        row = conn.execute("SELECT icloud_total, icloud_videos FROM accounts").fetchone()
+    assert (row["icloud_total"], row["icloud_videos"]) == (60, 6)
+    assert messages[0] == "alice：iCloud 共 60 张，其中视频 6 个，开始检查"
+    assert "已检查 50 / 60 张" in messages[1]
+
+
+def test_sync_continues_when_count_fails(db, cfg, account, library, monkeypatch):
+    from icloud_photo_vault.source import SourceError
+
+    def fail():
+        raise SourceError("网络错误")
+
+    make_asset(library, "a1", "IMG_0001.HEIC", datetime(2023, 5, 1, tzinfo=UTC))
+    monkeypatch.setattr(library, "count", fail)
+    assert sync(db, cfg, account, library).listed == 1

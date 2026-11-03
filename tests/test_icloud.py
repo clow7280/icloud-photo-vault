@@ -131,3 +131,25 @@ def test_delete_reports_server_error():
     source = make_source({"records": [{"recordName": "ASSET1", "serverErrorCode": "CONFLICT", "reason": "oplock"}]})
     with pytest.raises(SourceError, match="CONFLICT"):
         source.delete("ASSET1", "old-tag")
+
+
+class Sized:
+    def __init__(self, n):
+        self.n = n
+
+    def __len__(self):
+        return self.n
+
+
+def test_count_uses_index_lookup():
+    source = ICloudSource.__new__(ICloudSource)
+    source.library = type("Lib", (), {"all": Sized(3200), "albums": {"Videos": Sized(250)}})()
+    count = source.count()
+    assert (count.total, count.videos) == (3200, 250)
+
+
+def test_count_failure_is_source_error():
+    source = ICloudSource.__new__(ICloudSource)
+    source.library = type("Lib", (), {"all": Sized(10), "albums": {}})()
+    with pytest.raises(SourceError, match="查询照片数量失败"):
+        source.count()

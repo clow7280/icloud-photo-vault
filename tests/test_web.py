@@ -6,7 +6,7 @@ from conftest import requires_7zz
 from fastapi.testclient import TestClient
 
 from icloud_photo_vault.source import FakeBackend
-from icloud_photo_vault.web.app import create_app, month_ranges
+from icloud_photo_vault.web.app import create_app, library_progress, month_ranges
 
 
 @pytest.fixture
@@ -74,6 +74,21 @@ def test_overview_shows_metrics(client):
     for text in ("备份进度", "可释放空间", "照片按拍摄年份", "运行状况", "归档密码"):
         assert text in page
     assert "未设置，归档和自动清理不会运行" in page
+    with client.app_state.db.connect() as conn:
+        total, videos = conn.execute("SELECT icloud_total, icloud_videos FROM accounts").fetchone()
+    assert total == 40
+    assert f"照片 {total - videos} · 视频 {videos}" in page
+    assert "全部已备份" in page
+
+
+def test_library_progress_uses_icloud_count():
+    stats = {"in_icloud": 100, "videos": 8, "backed_up": 90, "two_copies": 50}
+    counted = {"icloud_total": 300, "icloud_videos": 20}
+    p = library_progress([counted], [stats])
+    assert (p["total"], p["photos"], p["videos"], p["missing"], p["known"]) == (300, 280, 20, 210, True)
+    # 还没查到总数时，退回到已经列出的数量
+    p = library_progress([{"icloud_total": None, "icloud_videos": None}], [stats])
+    assert (p["total"], p["videos"], p["missing"], p["known"]) == (100, 8, 10, False)
 
 
 def test_add_account_rejects_bad_name_and_keeps_input(client):

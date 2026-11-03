@@ -4,7 +4,7 @@
 <div class="page-head">
   <div>
     <h1>{{ account.name }}</h1>
-    <p class="subtitle">{{ account.apple_id }} · 上次同步 {{ account.last_sync_at | local }}</p>
+    <p class="subtitle">{{ account.apple_id }} · iCloud 共 {{ library.total }} 张，照片 {{ library.photos }}、视频 {{ library.videos }}{% if library.missing %} · 未同步 {{ library.missing }} 张{% endif %} · 上次同步 {{ account.last_sync_at | local }}</p>
   </div>
   <div class="actions">
     {% if account.auth_state == "ok" %}
@@ -63,13 +63,13 @@
   <div class="table-wrap">
   <table>
     <thead><tr>
-      <th>月份</th><th class="num">iCloud 中</th><th>已备份</th><th class="num">两份副本</th>
-      <th class="num">已删除</th><th class="num">用户自行删除</th><th class="num">iCloud 占用</th><th class="num">NAS 占用</th><th>归档</th>
+      <th>月份</th><th class="num">iCloud 中</th><th class="num">视频</th><th>已备份</th><th class="num">两份副本</th>
+      <th class="num">已删除</th><th class="num" title="用户在 iCloud 中自己删除的照片">自行删除</th><th class="num">iCloud 占用</th><th class="num">NAS 占用</th><th>归档</th>
     </tr></thead>
     <tbody>
     {% if months %}
     <tr class="total">
-      <td>合计</td><td class="num">{{ total.in_icloud }}</td><td>{{ total.backed_up }}</td><td class="num">{{ total.two_copies }}</td>
+      <td>合计</td><td class="num">{{ total.in_icloud }}</td><td class="num">{{ total.videos }}</td><td>{{ total.backed_up }}</td><td class="num">{{ total.two_copies }}</td>
       <td class="num">{{ total.deleted }}</td><td class="num">{{ total.gone }}</td><td class="num">{{ total.icloud_bytes | bytes }}</td><td class="num">{{ total.nas_bytes | bytes }}</td><td></td>
     </tr>
     {% endif %}
@@ -78,6 +78,7 @@
     <tr>
       <td>{{ "没有拍摄日期" if m.month == "unknown" else m.month }}</td>
       <td class="num">{{ m.in_icloud }}</td>
+      <td class="num">{{ m.videos }}</td>
       <td><span class="bar{{ ' partial' if pct < 100 }}"><span style="width: {{ pct }}%"></span></span>{{ m.backed_up }}</td>
       <td class="num">{{ m.two_copies }}</td>
       <td class="num">{{ m.deleted }}</td>
@@ -87,7 +88,7 @@
       <td>{% if m.archive %}<span class="badge ok" title="{{ m.archive.verified_at | local }} 校验通过">v{{ m.archive.version }}</span>{% else %}<span class="badge">未归档</span>{% endif %}</td>
     </tr>
     {% else %}
-    <tr><td colspan="9" class="empty">还没有同步过照片</td></tr>
+    <tr><td colspan="10" class="empty">还没有同步过照片</td></tr>
     {% endfor %}
     </tbody>
   </table>

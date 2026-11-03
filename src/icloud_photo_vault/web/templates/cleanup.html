@@ -17,7 +17,7 @@
 <div class="card empty">还没有账号。<a href="{{ base }}/accounts/new">添加账号</a></div>
 {% else %}
 <div class="stats kpis">
-  <div><div class="label">iCloud 占用</div><div class="value">{{ total.icloud_bytes | bytes }}</div><div class="sub">{{ total.in_icloud }} 张</div></div>
+  <div><div class="label">iCloud 占用</div><div class="value">{{ total.icloud_bytes | bytes }}</div><div class="sub">{{ total.in_icloud }} 张，其中视频 {{ total.videos }} 个</div></div>
   <div><div class="label">可以删除</div><div class="value">{{ total.backed_bytes | bytes }}</div><div class="sub">{{ total.backed_up }} 张已备份到 NAS</div></div>
   <div><div class="label">其中有两份副本</div><div class="value ok">{{ total.two_copies_bytes | bytes }}</div><div class="sub">{{ total.two_copies }} 张</div></div>
   <div><div class="label">符合自动清理</div><div class="value">{{ total.auto_bytes | bytes }}</div><div class="sub">{{ total.auto_ready }} 张，早于 {{ cutoff_month }}</div></div>
@@ -53,7 +53,7 @@
   <table>
     <thead><tr>
       <th class="pick"><input type="checkbox" id="pick-all" aria-label="全选"></th>
-      <th>月份</th><th class="num">iCloud 中</th><th class="num">占用</th><th class="num">两份副本</th>
+      <th>月份</th><th class="num">iCloud 中</th><th class="num">视频</th><th class="num">占用</th><th class="num">两份副本</th>
       <th class="num">只有一份</th><th class="num">未备份</th><th>自动清理</th>
     </tr></thead>
     <tbody>
@@ -64,6 +64,7 @@
         {{ "checked" if m.month in selected }} {{ "disabled" if not m.backed_up }} aria-label="选择 {{ m.month }}"></td>
       <td>{{ "没有拍摄日期" if m.month == "unknown" else m.month }}</td>
       <td class="num">{{ m.in_icloud }}</td>
+      <td class="num">{{ m.videos }}</td>
       <td class="num">{{ m.icloud_bytes | bytes }}</td>
       <td class="num">{{ m.two_copies }}</td>
       <td class="num">{{ m.backed_up - m.two_copies }}</td>
@@ -76,7 +77,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="8" class="empty">这个账号没有仍在 iCloud 中的照片</td></tr>
+    <tr><td colspan="9" class="empty">这个账号没有仍在 iCloud 中的照片</td></tr>
     {% endfor %}
     </tbody>
   </table>

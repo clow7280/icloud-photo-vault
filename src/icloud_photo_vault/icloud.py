@@ -18,7 +18,7 @@ from pyicloud_ipd.services.photos import PhotoAsset, PhotoLibrary
 from pyicloud_ipd.version_size import AssetVersionSize, LivePhotoVersionSize
 from requests import RequestException
 
-from .source import LoginRequired, PhotoSource, RemoteAsset, RemoteVersion, SourceError
+from .source import LibraryCount, LoginRequired, PhotoSource, RemoteAsset, RemoteVersion, SourceError
 
 log = logging.getLogger(__name__)
 
@@ -98,6 +98,15 @@ class ICloudSource:
             except (SourceError, KeyError, ValueError) as e:
                 log.warning("跳过无法解析的照片 %s：%s", photo.id, e)
                 self.unreadable.append(photo.id)
+
+    def count(self) -> LibraryCount:
+        """用 iCloud 的计数索引查询数量，一次请求就能得到，不用逐张列出照片。"""
+        try:
+            total = len(self.library.all)
+            videos = len(self.library.albums["Videos"])
+        except (PyiCloudException, RequestException, KeyError, ValueError) as e:
+            raise SourceError(f"查询照片数量失败：{e}") from e
+        return LibraryCount(total, videos)
 
     def download(self, asset: RemoteAsset, role: str) -> Iterator[bytes]:
         version = asset.versions[role]

@@ -15,7 +15,10 @@ CREATE TABLE IF NOT EXISTS accounts (
     auth_state TEXT NOT NULL DEFAULT 'need_login',
     last_sync_at TEXT,
     last_sync_error TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    icloud_total INTEGER,
+    icloud_videos INTEGER,
+    counted_at TEXT
 );
 
 -- state: in_icloud 仍在 iCloud；deleted 已由本工具删除；gone 在 iCloud 中被用户自己删除
@@ -104,6 +107,9 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 """
 
+# icloud_total、icloud_videos：每次同步开始时从 iCloud 查到的数量
+ADDED_ACCOUNT_COLUMNS = {"icloud_total": "INTEGER", "icloud_videos": "INTEGER", "counted_at": "TEXT"}
+
 # auto_delete_mode: off 关闭；report 只生成报告；on 自动删除
 DEFAULT_SETTINGS = {
     "auto_delete_mode": "report",
@@ -124,6 +130,11 @@ class Database:
         self.path = path
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            # 旧版本建的表缺少后来加的列
+            columns = {r["name"] for r in conn.execute("PRAGMA table_info(accounts)")}
+            for column, kind in ADDED_ACCOUNT_COLUMNS.items():
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE accounts ADD COLUMN {column} {kind}")
             conn.executemany(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
                 DEFAULT_SETTINGS.items(),

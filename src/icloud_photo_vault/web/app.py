@@ -55,6 +55,33 @@ def month_ranges(months: list[str]) -> str:
     return "、".join(text)
 
 
+def library_progress(accounts: list, stats: list[dict]) -> dict:
+    """备份进度以同步开始时从 iCloud 查到的总数为分母；还没查到时退回到已经列出的数量。"""
+    total = videos = backed = two = listed = 0
+    known = bool(accounts)
+    for account, t in zip(accounts, stats):
+        listed += t["in_icloud"]
+        backed += t["backed_up"]
+        two += t["two_copies"]
+        if account["icloud_total"] is None:
+            known = False
+            total += t["in_icloud"]
+            videos += t["videos"]
+        else:
+            total += account["icloud_total"]
+            videos += account["icloud_videos"] or 0
+    return {
+        "total": total,
+        "videos": videos,
+        "photos": total - videos,
+        "backed": min(backed, total),
+        "two": min(two, total),
+        "missing": max(total - backed, 0),
+        "listed": listed,
+        "known": known,
+    }
+
+
 def human_bytes(value: int | None) -> str:
     size = float(value or 0)
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -190,7 +217,9 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
             return None
         return {"free": usage.free, "total": usage.total, "free_ratio": usage.free / usage.total if usage.total else 0}
 
-    def health_items(accounts: list[sqlite3.Row], pending_archive: int, archive: sqlite3.Row) -> list[dict]:
+    def health_items(
+        accounts: list[sqlite3.Row], pending_archive: int, archive: sqlite3.Row, nas_bytes: int
+    ) -> list[dict]:
         """总览右侧的运行状况。state：ok 正常，warn 需要留意，bad 需要处理，info 只是说明。"""
         items = []
         password_set = read_password(cfg) is not None
@@ -216,6 +245,7 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
         items.append({"label": "最近同步", **sync_item})
         items.append({"label": "待归档", "state": "warn" if pending_archive else "ok",
                       "value": f"{pending_archive} 个月有新照片还没进归档包" if pending_archive else "全部已归档"})
+        items.append({"label": "NAS 占用", "state": "info", "value": f"备份 {human_bytes(nas_bytes)}"})
         items.append({"label": "归档包", "state": "info",
                       "value": f"{archive['months']} 个月 · {human_bytes(archive['bytes'])}"})
         mode = db.get_setting("auto_delete_mode")
@@ -248,11 +278,13 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
         pending_archive = sum(
             1 for r in rows if (r["month"] == "unknown" or r["month"] < current_month) and r["backed_up"] > r["two_copies"]
         )
+        summary = [(a, totals(months)) for a, months in per_account]
         return {
-            "summary": [(a, totals(months)) for a, months in per_account],
+            "summary": [(a, t, library_progress([a], [t])) for a, t in summary],
+            "library": library_progress([a for a, _ in summary], [t for _, t in summary]),
             "grand": totals(rows),
             "years": year_stats(rows),
-            "health": health_items(accounts, pending_archive, archive),
+            "health": health_items(accounts, pending_archive, archive, totals(rows)["nas_bytes"]),
             "archive": archive,
             "auto_years": db.get_int("auto_delete_years"),
             "cutoff_month": cutoff_month(now, db.get_int("auto_delete_years"), cfg.timezone),
@@ -331,6 +363,7 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
             account=account,
             months=months,
             total=totals(months),
+            library=library_progress([account], [totals(months)]),
             awaiting_code=request.query_params.get("code") == "1",
         )
 

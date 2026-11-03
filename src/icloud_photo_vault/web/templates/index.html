@@ -13,12 +13,12 @@
 </div>
 
 <div class="stats kpis">
-  <div><div class="label">iCloud 占用</div><div class="value">{{ grand.icloud_bytes | bytes }}</div><div class="sub">{{ grand.in_icloud }} 张照片</div></div>
-  <div><div class="label">备份进度</div><div class="value {{ 'ok' if grand.in_icloud and grand.backed_up == grand.in_icloud }}">{{ pct(grand.backed_up, grand.in_icloud) }}</div><div class="sub">{{ grand.backed_up }} / {{ grand.in_icloud }} 张</div></div>
-  <div><div class="label">有两份副本</div><div class="value">{{ pct(grand.two_copies, grand.in_icloud) }}</div><div class="sub">{{ grand.two_copies }} 张</div></div>
+  <div><div class="label">iCloud 中</div><div class="value">{{ library.total }}</div><div class="sub">照片 {{ library.photos }} · 视频 {{ library.videos }}</div></div>
+  <div><div class="label">备份进度</div><div class="value {{ 'ok' if library.total and not library.missing }}">{{ pct(library.backed, library.total) }}</div><div class="sub">{{ "未同步 " ~ library.missing ~ " 张" if library.missing else "全部已备份" }}</div></div>
+  <div><div class="label">有两份副本</div><div class="value">{{ pct(library.two, library.total) }}</div><div class="sub">{{ library.two }} 张</div></div>
+  <div><div class="label">iCloud 占用</div><div class="value">{{ grand.icloud_bytes | bytes }}</div><div class="sub" title="大小在逐张检查时才知道">{{ "已列出 " ~ library.listed ~ " 张" if library.listed < library.total else "视频 " ~ (grand.video_bytes | bytes) }}</div></div>
   <div><div class="label"><a href="{{ base }}/cleanup">可释放空间</a></div><div class="value">{{ grand.backed_bytes | bytes }}</div><div class="sub">自动清理 {{ grand.auto_bytes | bytes }}</div></div>
   <div><div class="label">已释放空间</div><div class="value">{{ grand.deleted_bytes | bytes }}</div><div class="sub">删除 {{ grand.deleted }} 张</div></div>
-  <div><div class="label">NAS 占用</div><div class="value">{{ grand.nas_bytes | bytes }}</div><div class="sub">归档包 {{ archive.bytes | bytes }}</div></div>
 </div>
 
 <div class="overview">
@@ -61,10 +61,10 @@
     <div class="card flush">
       <div class="card-title"><h3>账号</h3><a class="btn small" href="{{ base }}/accounts/new">添加账号</a></div>
       <div class="list">
-        {% for account, t in summary %}
+        {% for account, t, p in summary %}
         <a class="list-row" href="{{ base }}/accounts/{{ account.id }}">
           <span class="dot {{ 'ok' if account.auth_state == 'ok' else 'bad' }}" title="{{ '已登录' if account.auth_state == 'ok' else '需要登录' }}"></span>
-          <span class="grow"><strong>{{ account.name }}</strong> <span class="muted small">已备份 {{ pct(t.backed_up, t.in_icloud) }}</span></span>
+          <span class="grow"><strong>{{ account.name }}</strong> <span class="muted small">已备份 {{ pct(p.backed, p.total) }}</span></span>
           <span class="muted small">{{ account.last_sync_at | local if account.last_sync_at else ("需要登录" if account.auth_state != "ok" else "未同步") }}</span>
         </a>
         {% else %}

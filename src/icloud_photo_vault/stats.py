@@ -27,10 +27,12 @@ SELECT a.month AS month,
        SUM(a.state = 'in_icloud') AS in_icloud,
        SUM(a.state = 'deleted') AS deleted,
        SUM(a.state = 'gone') AS gone,
+       SUM(a.state = 'in_icloud' AND a.item_type = 'movie') AS videos,
        SUM(a.state = 'in_icloud' AND {BACKED}) AS backed_up,
        SUM(a.state = 'in_icloud' AND {TWO}) AS two_copies,
        SUM(a.state = 'in_icloud' AND {TWO} AND a.taken_at IS NOT NULL AND a.taken_at < :cutoff) AS auto_ready,
        SUM(CASE WHEN a.state = 'in_icloud' THEN a.size ELSE 0 END) AS icloud_bytes,
+       SUM(CASE WHEN a.state = 'in_icloud' AND a.item_type = 'movie' THEN a.size ELSE 0 END) AS video_bytes,
        SUM(CASE WHEN a.state = 'in_icloud' AND {BACKED} THEN a.size ELSE 0 END) AS backed_bytes,
        SUM(CASE WHEN a.state = 'in_icloud' AND {TWO} THEN a.size ELSE 0 END) AS two_copies_bytes,
        SUM(CASE WHEN a.state = 'in_icloud' AND {TWO} AND a.taken_at IS NOT NULL AND a.taken_at < :cutoff THEN a.size ELSE 0 END) AS auto_bytes,
@@ -42,8 +44,8 @@ GROUP BY a.month ORDER BY a.month DESC
 """
 
 FIELDS = (
-    "total", "in_icloud", "deleted", "gone", "backed_up", "two_copies", "auto_ready",
-    "icloud_bytes", "backed_bytes", "two_copies_bytes", "auto_bytes", "deleted_bytes", "nas_bytes",
+    "total", "in_icloud", "deleted", "gone", "videos", "backed_up", "two_copies", "auto_ready",
+    "icloud_bytes", "video_bytes", "backed_bytes", "two_copies_bytes", "auto_bytes", "deleted_bytes", "nas_bytes",
 )
 
 
