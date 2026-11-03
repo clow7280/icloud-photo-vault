@@ -31,6 +31,11 @@ scripts/build-fpk.sh
 生成的 `dist/icloud-photo-vault-<版本>.fpk` 在飞牛应用中心里手动安装。
 应用包里的备份目录、归档目录和运行用户是按作者的 NAS 写死的，在其他 NAS 上使用前要改 `fnos/app/docker/docker-compose.yaml` 和 `fnos/cmd/common`。
 
+## 发布
+
+推送 `v` 开头的 tag 后，GitHub Actions 先运行测试，再构建 fpk，发布到同名的 Release。
+tag 要与 `pyproject.toml` 中的版本号一致，例如版本 0.1.2 对应 `v0.1.2`。
+
 ## 配置
 
 | 环境变量            | 默认值             | 说明                                        |

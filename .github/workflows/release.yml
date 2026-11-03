@@ -1,0 +1,48 @@
+name: 发布
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-24.04
+    env:
+      FNPACK_URL: https://static2.fnnas.com/fnpack/fnpack-1.2.3-linux-amd64
+      FNPACK_SHA256: 54b97fa7b70968c4d05c79840f5daeff508957d0bb2062fdb0376d00d9615c93
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 检查 tag 与版本号一致
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME 与 pyproject.toml 中的版本 $version 不一致" >&2
+            exit 1
+          fi
+
+      - name: 下载 fnpack
+        run: |
+          mkdir -p .tools
+          curl -fsSL -o .tools/fnpack "$FNPACK_URL"
+          echo "$FNPACK_SHA256  .tools/fnpack" | sha256sum -c -
+          chmod +x .tools/fnpack
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 构建 fnOS 应用包
+        run: scripts/build-fpk.sh
+
+      - name: 发布 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "dist/icloud-photo-vault-${GITHUB_REF_NAME#v}.fpk" \
+            --title "$GITHUB_REF_NAME" --generate-notes
