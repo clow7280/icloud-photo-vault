@@ -30,10 +30,12 @@ class JobRecord:
 
 
 class Jobs:
-    def __init__(self, db: Database, cfg: Config, backend: Backend):
+    def __init__(self, db: Database, cfg: Config, backend: Backend, on_finish: Callable[[], None] | None = None):
         self.db = db
         self.cfg = cfg
         self.backend = backend
+        # 任务结束后调用，网页用它让统计缓存失效
+        self.on_finish = on_finish
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self.current: JobRecord | None = None
@@ -73,6 +75,11 @@ class Jobs:
             record.summary = f"失败：{e}"
             record.ok = False
         record.finished_at = utcnow()
+        if self.on_finish is not None:
+            try:
+                self.on_finish()
+            except Exception:
+                log.exception("任务结束后的回调失败")
         with self._lock:
             self.history.appendleft(record)
             self.current = None

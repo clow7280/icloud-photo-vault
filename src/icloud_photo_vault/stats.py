@@ -1,6 +1,12 @@
 """界面用的统计，只读数据库，不检查磁盘。"""
 
+import logging
 import sqlite3
+import threading
+import time
+from collections.abc import Callable
+
+log = logging.getLogger(__name__)
 
 ROLE_COUNT = "(LENGTH(a.roles) - LENGTH(REPLACE(a.roles, ',', '')) + 1)"
 
@@ -75,3 +81,67 @@ def year_stats(rows: list[dict]) -> list[dict]:
         for field in FIELDS:
             acc[field] += r[field] or 0
     return sorted(years.values(), key=lambda y: (y["year"] != "unknown", y["year"]), reverse=True)
+
+
+class StatsCache:
+    """缓存每个账号的按月统计，让页面不必每次都等统计查询。
+
+    照片多、NAS 又在同步时，一次统计要几秒，窗口会一直白屏。
+    缓存超过 max_age 秒或分界时间变了，先返回旧结果，同时在后台重算；
+    还没有缓存时才当场计算。任务结束或规则变化后调用 invalidate，下次当场重算。
+    """
+
+    def __init__(self, connect: Callable[[], sqlite3.Connection], max_age: float = 60):
+        self._connect = connect
+        self.max_age = max_age
+        self._lock = threading.Lock()
+        self._entries: dict[int, tuple[str, float, list[dict]]] = {}
+        self._refreshing: set[int] = set()
+        # 每次 invalidate 加一，作废在这之前开始的后台重算
+        self._generation = 0
+
+    def get(self, account_id: int, cutoff: str) -> list[dict]:
+        with self._lock:
+            entry = self._entries.get(account_id)
+            generation = self._generation
+            if entry is not None:
+                fresh = entry[0] == cutoff and time.monotonic() - entry[1] < self.max_age
+                if not fresh and account_id not in self._refreshing:
+                    self._refreshing.add(account_id)
+                    threading.Thread(
+                        target=self._refresh, args=(account_id, cutoff, generation), daemon=True
+                    ).start()
+                return entry[2]
+        return self._compute(account_id, cutoff, generation)
+
+    def warm(self, account_ids: list[int], cutoff: str) -> None:
+        """在后台把这些账号的统计先算好，服务启动时调用。"""
+        def run() -> None:
+            for account_id in account_ids:
+                try:
+                    self.get(account_id, cutoff)
+                except Exception:
+                    log.exception("预先计算账号 %s 的统计失败", account_id)
+        threading.Thread(target=run, daemon=True).start()
+
+    def invalidate(self) -> None:
+        with self._lock:
+            self._entries.clear()
+            self._generation += 1
+
+    def _compute(self, account_id: int, cutoff: str, generation: int) -> list[dict]:
+        with self._connect() as conn:
+            rows = month_stats(conn, account_id, cutoff)
+        with self._lock:
+            if generation == self._generation:
+                self._entries[account_id] = (cutoff, time.monotonic(), rows)
+        return rows
+
+    def _refresh(self, account_id: int, cutoff: str, generation: int) -> None:
+        try:
+            self._compute(account_id, cutoff, generation)
+        except Exception:
+            log.exception("重算账号 %s 的统计失败", account_id)
+        finally:
+            with self._lock:
+                self._refreshing.discard(account_id)

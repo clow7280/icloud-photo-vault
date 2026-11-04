@@ -23,7 +23,7 @@ from ..backup import month_key
 from ..deletion import auto_delete_plan, cutoff_month, manual_delete_preview, years_before
 from ..jobs import Jobs, Scheduler
 from ..source import Backend, FakeBackend, SourceError
-from ..stats import month_stats, totals, year_stats
+from ..stats import StatsCache, totals, year_stats
 
 TEMPLATES = Jinja2Templates(directory=Path(__file__).parent / "templates")
 STATIC_DIR = Path(__file__).parent / "static"
@@ -112,18 +112,22 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
     cfg.ensure_dirs()
     db = Database(cfg.db_path)
     backend = backend or default_backend(cfg)
-    jobs = Jobs(db, cfg, backend)
+    stats = StatsCache(db.connect)
+    jobs = Jobs(db, cfg, backend, on_finish=stats.invalidate)
     scheduler = Scheduler(jobs)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         if start_scheduler:
+            # 和定时任务一起启动：先在后台把统计算好，第一次打开页面不用等
+            with db.connect() as conn:
+                stats.warm([a["id"] for a in all_accounts(conn)], cutoff_iso(datetime.now(UTC)))
             scheduler.start()
         yield
         scheduler.stop()
 
     app = FastAPI(title="iCloud 照片保管库", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
-    app.state.db, app.state.jobs, app.state.cfg = db, jobs, cfg
+    app.state.db, app.state.jobs, app.state.cfg, app.state.stats = db, jobs, cfg, stats
     router = APIRouter()
     base = cfg.base_path
 
@@ -206,7 +210,9 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
         return conn.execute("SELECT * FROM accounts ORDER BY id").fetchall()
 
     def cutoff_iso(now: datetime) -> str:
-        return years_before(now, db.get_int("auto_delete_years")).isoformat(timespec="seconds")
+        """统计用的自动清理分界时间。取整到小时，统计缓存才不会每秒都过期。"""
+        hour = now.replace(minute=0, second=0, microsecond=0)
+        return years_before(hour, db.get_int("auto_delete_years")).isoformat(timespec="seconds")
 
     # ---- 总览 ----
 
@@ -269,7 +275,7 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
         cutoff = cutoff_iso(now)
         with db.connect() as conn:
             accounts = all_accounts(conn)
-            per_account = [(a, month_stats(conn, a["id"], cutoff)) for a in accounts]
+            per_account = [(a, stats.get(a["id"], cutoff)) for a in accounts]
             archive = conn.execute(
                 "SELECT COUNT(*) AS months, COALESCE(SUM(total_size), 0) AS bytes FROM archives"
             ).fetchone()
@@ -355,7 +361,7 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
     def account_page(request: Request, account_id: int):
         with db.connect() as conn:
             account = get_account(conn, account_id)
-            months = month_stats(conn, account_id)
+        months = stats.get(account_id, cutoff_iso(datetime.now(UTC)))
         return render(
             request,
             "account.html",
@@ -495,7 +501,7 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
         with db.connect() as conn:
             accounts = all_accounts(conn)
             current = next((a for a in accounts if a["id"] == account), accounts[0] if accounts else None)
-            rows = month_stats(conn, current["id"], cutoff_iso(now)) if current else []
+        rows = stats.get(current["id"], cutoff_iso(now)) if current else []
         context: dict = {
             "accounts": accounts,
             "account": current,
@@ -587,6 +593,7 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
         db.set_setting("auto_delete_mode", mode)
         db.set_setting("auto_delete_years", str(years))
         db.set_setting("auto_delete_max_per_run", str(limit))
+        stats.invalidate()
         if changes:
             record(request, "清理规则", "，".join(changes))
         return back(url, msg="已保存清理规则" if changes else "规则没有变化")
