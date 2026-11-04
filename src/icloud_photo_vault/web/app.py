@@ -260,7 +260,8 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
             sync_item = {"state": "info", "value": "还没有账号"}
         items.append({"label": "最近同步", **sync_item})
         items.append({"label": "待归档", "state": "warn" if pending_archive else "ok",
-                      "value": f"{pending_archive} 个月有新照片还没进归档包" if pending_archive else "全部已归档"})
+                      "value": f"{pending_archive} 个月有新照片还没进归档包" if pending_archive else "全部已归档",
+                      "action": ("/jobs/archive", "立即归档") if pending_archive and password_set else None})
         items.append({"label": "NAS 占用", "state": "info", "value": f"备份 {human_bytes(nas_bytes)}"})
         items.append({"label": "归档包", "state": "info",
                       "value": f"{archive['months']} 个月 · {human_bytes(archive['bytes'])}"})

@@ -193,6 +193,8 @@ def test_auto_cleanup_flow(client):
     add_and_login(client)
     r = client.post("/settings/password", data={"password": "correct horse battery", "again": "correct horse battery"})
     assert "归档密码已设置" in r.text
+    # 有待归档的月份时，运行状况里可以直接归档
+    assert '<button type="submit" class="small">立即归档</button>' in client.get("/").text
 
     job = run_cycle(client)
     assert job.ok, job.summary

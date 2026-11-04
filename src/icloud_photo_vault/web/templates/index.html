@@ -7,7 +7,7 @@
     <p class="subtitle">上次完整运行 {{ last_cycle | local }}</p>
   </div>
   <div class="actions">
-    <form method="post" action="{{ base }}/jobs/archive" data-busy="正在提交…"><button type="submit">只运行归档</button></form>
+    <form method="post" action="{{ base }}/jobs/archive" data-busy="正在提交…"><button type="submit">立即归档</button></form>
     <form method="post" action="{{ base }}/jobs/cycle" data-busy="正在提交…"><button type="submit" class="primary">立即完整运行一轮</button></form>
   </div>
 </div>
@@ -80,6 +80,7 @@
           <span class="dot {{ item.state }}"></span>
           <span class="list-label">{{ item.label }}</span>
           <span class="grow ellipsis" title="{{ item.value }}">{% if item.href %}<a href="{{ base }}{{ item.href }}">{{ item.value }}</a>{% else %}{{ item.value }}{% endif %}</span>
+          {% if item.action %}<form method="post" action="{{ base }}{{ item.action[0] }}" data-busy="正在提交…"><button type="submit" class="small">{{ item.action[1] }}</button></form>{% endif %}
         </div>
         {% endfor %}
       </div>
