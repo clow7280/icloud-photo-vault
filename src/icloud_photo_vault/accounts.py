@@ -1,11 +1,32 @@
-"""账号改名：账号名称同时是备份目录、归档目录和归档文件名的前缀，改名时要一起改。"""
+"""账号的 Apple ID 整理和改名。"""
 
 import json
 import os
+import re
+import unicodedata
 from pathlib import Path
 
 from .config import Config
 from .db import Database
+
+PHONE_SEPARATORS = re.compile(r"[\s\-().]")
+CN_MOBILE = re.compile(r"(?:\+86|0086|86)?(1[3-9][0-9]{9})")
+
+
+def normalize_apple_id(apple_id: str, domain: str) -> str:
+    """把中国大陆手机号形式的 Apple ID 整理成 86 加 11 位号码，例如 8613812345678。
+
+    这是实际登录成功过的写法。邮箱和其他写法只去掉首尾空白，原样返回。
+    只有区域是中国大陆时才整理，因为其他地区的号码可能同样以 1 开头、长度也是 11 位。
+    """
+    value = apple_id.strip()
+    if domain != "cn" or "@" in value:
+        return value
+    # 全角的数字和加号转成半角，再去掉空格、横线、括号和点
+    compact = PHONE_SEPARATORS.sub("", unicodedata.normalize("NFKC", value))
+    if m := CN_MOBILE.fullmatch(compact):
+        return "86" + m.group(1)
+    return value
 
 
 class RenameError(Exception):

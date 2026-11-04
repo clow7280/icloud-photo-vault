@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from ..accounts import rename_account
+from ..accounts import normalize_apple_id, rename_account
 from ..archive import ArchiveError, read_password, write_password
 from ..config import Config
 from ..db import Database, utcnow
@@ -320,7 +320,7 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
         apple_id: Annotated[str, Form()],
         domain: Annotated[str, Form()] = "cn",
     ):
-        name, apple_id = name.strip(), apple_id.strip()
+        name, apple_id = name.strip(), normalize_apple_id(apple_id, domain)
         form = {"name": name, "apple_id": apple_id, "domain": domain}
         # 出错时直接重新显示对话框，不把 Apple ID 放进网址
         if not ACCOUNT_NAME.match(name):

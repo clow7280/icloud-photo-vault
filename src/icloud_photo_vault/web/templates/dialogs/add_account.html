@@ -26,8 +26,8 @@
       <form id="step-form" method="post" action="{{ base }}/accounts" class="form-stack" data-busy="正在添加…">
         <label class="field"><span>名称，用作备份目录名，建议用账号主人的名字</span>
           <input name="name" required maxlength="32" placeholder="例如 clow" value="{{ form.name or '' }}" autofocus></label>
-        <label class="field"><span>Apple ID</span>
-          <input name="apple_id" required placeholder="name@example.com" autocomplete="off" value="{{ form.apple_id or '' }}"></label>
+        <label class="field"><span>Apple ID，邮箱或手机号。中国大陆的手机号会自动整理成 86 开头的格式</span>
+          <input name="apple_id" required placeholder="name@example.com 或 13812345678" autocomplete="off" value="{{ form.apple_id or '' }}"></label>
         <label class="field"><span>区域</span>
           <select name="domain">
             <option value="cn" {{ "selected" if form.domain != "com" }}>中国大陆（云上贵州）</option>

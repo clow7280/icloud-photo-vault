@@ -5,6 +5,7 @@ import pytest
 from conftest import requires_7zz
 from fastapi.testclient import TestClient
 
+from icloud_photo_vault.accounts import normalize_apple_id
 from icloud_photo_vault.source import FakeBackend
 from icloud_photo_vault.web.app import create_app, library_progress, month_ranges
 
@@ -95,6 +96,31 @@ def test_add_account_rejects_bad_name_and_keeps_input(client):
     r = client.post("/accounts", data={"name": "../x", "apple_id": "a@b.c"})
     assert "不能含空格" in r.text
     assert 'value="a@b.c"' in r.text
+
+
+@pytest.mark.parametrize(
+    ("raw", "domain", "expected"),
+    [
+        ("13812345678", "cn", "8613812345678"),
+        (" +86 138-1234-5678 ", "cn", "8613812345678"),
+        ("0086 13812345678", "cn", "8613812345678"),
+        ("8613812345678", "cn", "8613812345678"),
+        ("＋８６ １３８１２３４５６７８", "cn", "8613812345678"),
+        (" Name@Example.com ", "cn", "Name@Example.com"),
+        ("12125550123", "cn", "12125550123"),
+        ("13812345678", "com", "13812345678"),
+    ],
+)
+def test_normalize_apple_id(raw, domain, expected):
+    assert normalize_apple_id(raw, domain) == expected
+
+
+def test_add_account_normalizes_phone_number(client):
+    r = client.post("/accounts", data={"name": "bob", "apple_id": "138 1234 5678", "domain": "cn"})
+    assert "输入 <strong>8613812345678</strong> 的密码" in r.text
+    # 同一个号码换一种写法，也能认出是重复添加
+    r = client.post("/accounts", data={"name": "bob2", "apple_id": "+86 13812345678", "domain": "cn"})
+    assert "Apple ID 已经存在" in r.text
 
 
 def test_discard_half_added_account(client):
