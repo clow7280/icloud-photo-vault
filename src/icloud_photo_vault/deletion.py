@@ -3,13 +3,13 @@
 import json
 import logging
 import sqlite3
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .db import Database, utcnow
+from .progress import Progress, no_progress
 from .source import PhotoSource, SourceError
 
 log = logging.getLogger(__name__)
@@ -192,7 +192,7 @@ def execute_deletion(
     account_id: int,
     asset_ids: list[str],
     mode: str,
-    progress: Callable[[str], None] = lambda _: None,
+    progress: Progress = no_progress,
 ) -> DeleteResult:
     """删除前逐张重新检查：自动删除要求两份副本，人工删除要求至少已经备份。"""
     required = 2 if mode == "auto" else 1
@@ -230,7 +230,7 @@ def execute_deletion(
         _log_deletion(db, asset, mode, "ok", None)
         result.deleted += 1
         if result.deleted % 50 == 0:
-            progress(f"已从 iCloud 删除 {result.deleted} 张")
+            progress(f"已从 iCloud 删除 {result.deleted} 张", result.deleted, len(asset_ids))
     return result
 
 

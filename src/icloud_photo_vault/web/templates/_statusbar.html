@@ -1,0 +1,30 @@
+{#- 底部状态栏：左边是当前任务，右边是需要留意的账号和下次自动运行。页面渲染和轮询共用 -#}
+{%- set task = status.task %}
+{%- set acc = status.accounts %}
+<footer class="statusbar" id="statusbar" data-running="{{ '1' if status.running else '0' }}">
+  <div class="sb-task">
+    {%- if task %}
+    <span class="spinner"></span>
+    <strong>{{ task.name }}</strong>
+    {%- if task.account %}<span class="sb-sep">›</span><span>{{ task.account.name }}{% if task.account.total > 1 %}（第 {{ task.account.index }}/{{ task.account.total }} 个账号）{% endif %}</span>{% endif %}
+    {%- if task.step %}<span class="sb-sep">›</span><span class="sb-step" title="{{ task.step }}">{{ task.step }}</span>{% endif %}
+    {%- if task.percent is not none %}<span class="sb-meter" title="{{ task.done }} / {{ task.total }}"><span style="width: {{ task.percent }}%"></span></span><span class="sb-pct">{{ task.percent }}%</span>{% endif %}
+    {%- elif status.last and not status.last.ok %}
+    <span class="dot bad"></span><a href="{{ base }}/log?view=tasks" class="bad" title="{{ status.last.summary }}">{{ status.last.name }}失败</a><span class="muted">{{ status.last.finished_at }}</span>
+    {%- else %}
+    <span class="dot ok"></span><span>空闲</span>
+    {%- if status.last %}<span class="sb-sep">·</span><span class="muted">上次任务：{{ status.last.name }} · {{ status.last.finished_at }} 完成</span>{% endif %}
+    {%- endif %}
+  </div>
+  <div class="sb-item">
+    {%- if acc.need_login %}
+    <span class="dot bad"></span><a href="{{ base }}/accounts/{{ acc.need_login[0].id }}" class="bad">{{ acc.need_login | map(attribute="name") | join("、") }} 需要登录</a>
+    {%- elif acc.total %}
+    <span class="dot ok"></span><span>{{ acc.total }} 个账号已登录</span>
+    {%- else %}
+    <a href="{{ base }}/accounts/new">还没有账号</a>
+    {%- endif %}
+  </div>
+  <div class="sb-item sb-next" title="{{ '上次完整运行 ' ~ status.last_cycle if status.last_cycle }}">下次自动运行 {{ status.next_cycle or "即将开始" }}</div>
+  {%- if fake %}<div class="sb-item sb-fake"><span class="badge warn">模拟数据</span></div>{% endif %}
+</footer>

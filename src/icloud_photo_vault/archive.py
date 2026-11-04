@@ -8,7 +8,6 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +15,7 @@ from pathlib import Path
 from .backup import UNKNOWN_MONTH, month_key
 from .config import Config
 from .db import Database, utcnow
+from .progress import Progress, no_progress
 
 log = logging.getLogger(__name__)
 
@@ -259,7 +259,7 @@ def build_month_archive(
 
 
 def run_archive(
-    db: Database, cfg: Config, now: datetime, progress: Callable[[str], None] = lambda _: None
+    db: Database, cfg: Config, now: datetime, progress: Progress = no_progress
 ) -> ArchiveRunResult:
     result = ArchiveRunResult()
     password = read_password(cfg)
@@ -274,11 +274,11 @@ def run_archive(
     for account in accounts:
         with db.connect() as conn:
             months = archivable_months(conn, account["id"], current_month)
-        for month in months:
+        for index, month in enumerate(months, 1):
+            progress(f"正在归档 {account['name']} {month}", index - 1, len(months))
             try:
                 if build_month_archive(db, cfg, sz, account, month, password, volume_mb):
                     result.built += 1
-                    progress(f"{account['name']}：已归档 {month}")
                 else:
                     result.unchanged += 1
             except (ArchiveError, OSError) as e:

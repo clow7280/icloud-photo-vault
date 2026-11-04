@@ -19,7 +19,7 @@
 <link rel="stylesheet" href="{{ base }}/static/app.css?v={{ version }}">
 <script src="{{ base }}/static/app.js?v={{ version }}" defer></script>
 </head>
-<body data-status-url="{{ base }}/api/status" data-job-running="{{ '1' if jobs.current else '0' }}">
+<body data-statusbar-url="{{ base }}/statusbar">
 <div class="layout">
 <aside class="sidebar">
   <nav class="nav">
@@ -45,19 +45,7 @@
   {% endif %}
   {% block content %}{% endblock %}
 </main>
-<footer class="statusbar">
-  {%- set need_login = status.accounts.total - status.accounts.logged_in %}
-  <div id="sb-job" class="sb-item grow">
-    {%- if status.running %}
-    <span id="sb-job-icon" class="spinner"></span><span id="sb-job-text">{{ status.name }}{% if status.syncing and status.syncing.total > 1 %} · 正在同步第 {{ status.syncing.index }}/{{ status.syncing.total }} 个账号{% endif %}{% if status.progress %} · {{ status.progress }}{% endif %}</span>
-    {%- else %}
-    <span id="sb-job-icon" class="dot {{ 'bad' if status.last and not status.last.ok else 'ok' }}"></span><span id="sb-job-text">空闲{% if status.last %} · 上次任务：{{ status.last.name }}{{ "完成" if status.last.ok else "失败" }}{% endif %}</span>
-    {%- endif %}
-  </div>
-  <div id="sb-accounts" class="sb-item">{{ status.accounts.total }} 个账号 · {{ status.accounts.logged_in }} 个已登录{% if need_login %} · <span class="warn">{{ need_login }} 个需要登录</span>{% endif %}</div>
-  <div id="sb-next" class="sb-item">下次自动运行 {{ status.next_cycle or "即将开始" }}</div>
-  <div class="sb-item muted">{% if fake %}模拟数据 · {% endif %}v{{ version }}</div>
-</footer>
+{% include "_statusbar.html" %}
 </div>
 {% if dialog %}{% include dialog %}{% endif %}
 </body>

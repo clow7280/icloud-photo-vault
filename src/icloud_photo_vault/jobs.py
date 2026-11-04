@@ -13,11 +13,10 @@ from .backup import sync_account
 from .config import Config
 from .db import Database, utcnow
 from .deletion import auto_delete_plan, execute_deletion
+from .progress import Progress
 from .source import Backend, LoginRequired, PhotoSource
 
 log = logging.getLogger(__name__)
-
-Progress = Callable[[str], None]
 
 
 @dataclass
@@ -40,6 +39,8 @@ class Jobs:
         self._thread: threading.Thread | None = None
         self.current: JobRecord | None = None
         self.progress = ""
+        # 进度条用的完成数和总数，不知道时为 None
+        self.meter: tuple[int, int] | None = None
         # 正在同步第几个账号，给状态栏显示
         self.syncing: dict | None = None
         self.history: deque[JobRecord] = deque(maxlen=20)
@@ -55,6 +56,7 @@ class Jobs:
             record = JobRecord(name=name, started_at=utcnow())
             self.current = record
             self.progress = "开始运行"
+            self.meter = None
             self._thread = threading.Thread(target=self._run, args=(record, fn), daemon=True)
             self._thread.start()
             return True
@@ -64,8 +66,9 @@ class Jobs:
         if thread is not None:
             thread.join(timeout)
 
-    def _set_progress(self, message: str) -> None:
+    def _set_progress(self, message: str, done: int | None = None, total: int | None = None) -> None:
         self.progress = message
+        self.meter = (done, total) if done is not None and total else None
 
     def _run(self, record: JobRecord, fn: Callable[[Progress], str]) -> None:
         try:
@@ -84,6 +87,7 @@ class Jobs:
             self.history.appendleft(record)
             self.current = None
             self.progress = ""
+            self.meter = None
             self.syncing = None
 
     # ---- 任务内容 ----
@@ -115,7 +119,7 @@ class Jobs:
             if source is None:
                 lines.append(f"{account['name']}：需要重新登录，已跳过")
                 continue
-            progress(f"{account['name']}：正在列出 iCloud 照片")
+            progress("正在查询 iCloud 照片数量")
             try:
                 r = sync_account(self.db, self.cfg.backup_root, self.cfg.timezone, account, source, progress)
             except Exception as e:
@@ -158,7 +162,7 @@ class Jobs:
             )
             if not plan:
                 continue
-            progress(f"{account['name']}：自动删除 {len(plan)} 张")
+            progress(f"正在自动清理 {account['name']} 的 {len(plan)} 张", 0, len(plan))
             r = execute_deletion(
                 self.db, self.cfg.backup_root, self.cfg.archive_root, source, account["id"],
                 [c.asset_id for c in plan], "auto", progress,

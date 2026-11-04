@@ -145,27 +145,37 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
     local_time = make_local_time(cfg)
 
     def status_payload() -> dict:
-        """底部状态栏的内容，页面首次渲染和轮询共用。"""
-        last = jobs.history[0] if jobs.history else None
+        """底部状态栏的内容，页面渲染和轮询共用。"""
         current = jobs.current
+        task = None
+        if current is not None:
+            syncing = jobs.syncing
+            meter = jobs.meter
+            task = {
+                "name": current.name,
+                # 任务名里已经有账号名时（例如“同步 小红”）不再重复显示
+                "account": syncing if syncing and syncing["name"] not in current.name else None,
+                "step": jobs.progress,
+                "done": meter[0] if meter else None,
+                "total": meter[1] if meter else None,
+                "percent": min(100, int(100 * meter[0] / meter[1])) if meter else None,
+            }
+        last = jobs.history[0] if jobs.history else None
         with db.connect() as conn:
-            total, logged_in = conn.execute(
-                "SELECT COUNT(*), COALESCE(SUM(auth_state = 'ok'), 0) FROM accounts"
-            ).fetchone()
+            accounts = conn.execute("SELECT id, name, auth_state FROM accounts ORDER BY id").fetchall()
+        need_login = [{"id": a["id"], "name": a["name"]} for a in accounts if a["auth_state"] != "ok"]
         last_cycle = db.get_setting("last_cycle_at")
         next_cycle = None
         if last_cycle:
-            interval = timedelta(hours=db.get_int("sync_interval_hours"))
-            next_cycle = local_time((datetime.fromisoformat(last_cycle) + interval).isoformat())
+            due = datetime.fromisoformat(last_cycle) + timedelta(hours=db.get_int("sync_interval_hours"))
+            next_cycle = local_time(due.isoformat()) if due > datetime.now(UTC) else None
         return {
             "running": jobs.running(),
-            "name": current.name if current else None,
-            "progress": jobs.progress,
-            "syncing": jobs.syncing,
+            "task": task,
             "last": None
             if last is None
-            else {"name": last.name, "ok": last.ok, "summary": last.summary, "finished_at": last.finished_at},
-            "accounts": {"total": total, "logged_in": logged_in},
+            else {"name": last.name, "ok": last.ok, "summary": last.summary, "finished_at": local_time(last.finished_at)},
+            "accounts": {"total": len(accounts), "logged_in": len(accounts) - len(need_login), "need_login": need_login},
             "last_cycle": local_time(last_cycle),
             "next_cycle": next_cycle,
         }
@@ -449,6 +459,13 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
     @router.get("/api/status")
     def status():
         return JSONResponse(status_payload())
+
+    @router.get("/statusbar", response_class=HTMLResponse)
+    def statusbar(request: Request):
+        """状态栏片段，页面轮询后整块替换。"""
+        return TEMPLATES.TemplateResponse(
+            request, "_statusbar.html", {"status": status_payload(), "base": base, "fake": cfg.source == "fake"}
+        )
 
     @router.post("/jobs/cycle")
     def run_cycle(request: Request):

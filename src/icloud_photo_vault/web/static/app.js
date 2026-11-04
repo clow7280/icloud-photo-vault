@@ -92,68 +92,42 @@
     update();
   }
 
-  // 只更新底部状态栏，不刷新整个页面
-  const icon = document.getElementById("sb-job-icon");
-  const jobText = document.getElementById("sb-job-text");
-  const accounts = document.getElementById("sb-accounts");
-  const next = document.getElementById("sb-next");
-  const statusUrl = document.body.dataset.statusUrl;
-  if (!icon || !statusUrl) return;
-  let running = document.body.dataset.jobRunning === "1";
+  // 只更新底部状态栏，不刷新整个页面：轮询服务端渲染好的状态栏片段，整块替换
+  const url = document.body.dataset.statusbarUrl;
+  if (!url || !document.getElementById("statusbar")) return;
+  const isRunning = () => document.getElementById("statusbar").dataset.running === "1";
   // 本页打开期间有任务结束，就一直提示刷新
   let finished = false;
 
-  function renderJob(status, justFinished) {
-    if (status.running) {
-      icon.className = "spinner";
-      const parts = [status.name];
-      if (status.syncing && status.syncing.total > 1) parts.push(`正在同步第 ${status.syncing.index}/${status.syncing.total} 个账号`);
-      if (status.progress) parts.push(status.progress);
-      jobText.textContent = parts.join(" · ");
-      return;
-    }
-    const last = status.last;
-    icon.className = last && !last.ok ? "dot bad" : "dot ok";
-    jobText.textContent = last ? `空闲 · 上次任务：${last.name}${last.ok ? "完成" : "失败"}` : "空闲";
-    if (justFinished) {
-      const link = document.createElement("a");
-      link.href = "#";
-      link.textContent = "刷新查看最新数据";
-      link.addEventListener("click", (event) => {
-        event.preventDefault();
-        window.location.reload();
-      });
-      jobText.append(" · ", link);
-    }
-  }
-
-  function renderInfo(status) {
-    const { total, logged_in: loggedIn } = status.accounts;
-    accounts.textContent = `${total} 个账号 · ${loggedIn} 个已登录`;
-    if (total > loggedIn) {
-      const warn = document.createElement("span");
-      warn.className = "warn";
-      warn.textContent = `${total - loggedIn} 个需要登录`;
-      accounts.append(" · ", warn);
-    }
-    next.textContent = `下次自动运行 ${status.next_cycle || "即将开始"}`;
-  }
-
   async function poll() {
+    const wasRunning = isRunning();
     try {
-      const response = await fetch(statusUrl, { cache: "no-store", credentials: "same-origin" });
+      const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
       if (response.ok) {
-        const status = await response.json();
-        if (running && !status.running) finished = true;
-        renderJob(status, finished && !status.running);
-        renderInfo(status);
-        running = status.running;
+        const template = document.createElement("template");
+        template.innerHTML = (await response.text()).trim();
+        const bar = template.content.firstElementChild;
+        if (bar && bar.id === "statusbar") {
+          document.getElementById("statusbar").replaceWith(bar);
+          if (wasRunning && !isRunning()) finished = true;
+          if (finished && !isRunning()) {
+            const link = document.createElement("a");
+            link.href = "#";
+            link.className = "sb-refresh";
+            link.textContent = "刷新查看最新数据";
+            link.addEventListener("click", (event) => {
+              event.preventDefault();
+              window.location.reload();
+            });
+            bar.querySelector(".sb-task").append(link);
+          }
+        }
       }
     } catch (_) {
       // 网络波动时下一轮再试
     }
-    setTimeout(poll, running ? 2000 : 15000);
+    setTimeout(poll, isRunning() ? 2000 : 15000);
   }
 
-  setTimeout(poll, running ? 2000 : 15000);
+  setTimeout(poll, isRunning() ? 2000 : 15000);
 })();

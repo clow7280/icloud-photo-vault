@@ -4,13 +4,13 @@ import hashlib
 import logging
 import os
 import sqlite3
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .db import Database, utcnow
+from .progress import Progress, no_progress
 from .source import PhotoSource, RemoteAsset, RemoteVersion, SourceError
 
 log = logging.getLogger(__name__)
@@ -267,7 +267,7 @@ def sync_account(
     tz: ZoneInfo,
     account: sqlite3.Row,
     source: PhotoSource,
-    progress: Callable[[str], None] = lambda _: None,
+    progress: Progress = no_progress,
 ) -> SyncResult:
     """列出账号的全部照片，下载缺少的文件，并标记在 iCloud 中已经不存在的照片。"""
     result = SyncResult()
@@ -281,15 +281,15 @@ def sync_account(
         count = source.count()
     except SourceError as e:
         log.warning("%s 查询照片数量失败：%s", account["name"], e)
-        of_total = ""
+        total = None
     else:
         with db.connect() as conn:
             conn.execute(
                 "UPDATE accounts SET icloud_total = ?, icloud_videos = ?, counted_at = ? WHERE id = ?",
                 (count.total, count.videos, now, account_id),
             )
-        of_total = f" / {count.total}"
-        progress(f"{account['name']}：iCloud 共 {count.total} 张，其中视频 {count.videos} 个，开始检查")
+        total = count.total
+        progress(f"iCloud 共 {count.total} 张，其中视频 {count.videos} 个，开始检查", 0, total)
     for asset in source.iter_assets():
         result.listed += 1
         seen.add(asset.asset_id)
@@ -305,7 +305,8 @@ def sync_account(
         result.downloaded += files
         result.downloaded_bytes += size
         if result.listed % 50 == 0:
-            progress(f"{account['name']}：已检查 {result.listed}{of_total} 张，下载 {result.downloaded} 个文件")
+            of_total = f" / {total}" if total else ""
+            progress(f"已检查 {result.listed}{of_total} 张，下载 {result.downloaded} 个文件", result.listed, total)
 
     # 只有完整列完照片库之后，才能判断哪些照片已经不在 iCloud 里
     seen.update(getattr(source, "unreadable", ()))

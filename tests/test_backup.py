@@ -125,12 +125,12 @@ def test_sync_records_icloud_count_and_reports_progress(db, cfg, account, librar
         name = f"IMG_{i:04d}.MOV" if i % 10 == 0 else f"IMG_{i:04d}.HEIC"
         make_asset(library, f"a{i}", name, datetime(2023, 5, 1, tzinfo=UTC))
     messages = []
-    sync_account(db, cfg.backup_root, cfg.timezone, account, library, messages.append)
+    sync_account(db, cfg.backup_root, cfg.timezone, account, library, lambda *args: messages.append(args))
     with db.connect() as conn:
         row = conn.execute("SELECT icloud_total, icloud_videos FROM accounts").fetchone()
     assert (row["icloud_total"], row["icloud_videos"]) == (60, 6)
-    assert messages[0] == "alice：iCloud 共 60 张，其中视频 6 个，开始检查"
-    assert "已检查 50 / 60 张" in messages[1]
+    assert messages[0] == ("iCloud 共 60 张，其中视频 6 个，开始检查", 0, 60)
+    assert messages[1] == ("已检查 50 / 60 张，下载 50 个文件", 50, 60)
 
 
 def test_sync_continues_when_count_fails(db, cfg, account, library, monkeypatch):

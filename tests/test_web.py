@@ -55,12 +55,52 @@ def test_pages_render(client):
 
 def test_status_api(client):
     status = client.get("/api/status").json()
-    assert status["running"] is False and status["last"] is None and status["syncing"] is None
-    assert status["accounts"] == {"total": 0, "logged_in": 0}
+    assert status["running"] is False and status["last"] is None and status["task"] is None
+    assert status["accounts"] == {"total": 0, "logged_in": 0, "need_login": []}
+    assert "还没有账号" in client.get("/statusbar").text
     add_and_login(client)
     status = client.get("/api/status").json()
     assert status["last"]["name"] == "同步 alice" and status["last"]["ok"] is True
-    assert status["accounts"] == {"total": 1, "logged_in": 1}
+    assert status["accounts"]["logged_in"] == 1
+    bar = client.get("/statusbar").text
+    assert 'data-running="0"' in bar and "上次任务：同步 alice · " in bar and "1 个账号已登录" in bar
+
+
+def test_statusbar_shows_task_once(client):
+    add_and_login(client)
+    jobs = client.app_state.jobs
+    release = threading.Event()
+
+    def task(progress):
+        jobs.syncing = {"index": 1, "total": 2, "name": "alice"}
+        progress("已检查 50 / 200 张，下载 60 个文件", 50, 200)
+        release.wait(10)
+        return ""
+
+    jobs.submit("同步 alice", task)
+    try:
+        for _ in range(100):
+            if jobs.meter:
+                break
+            threading.Event().wait(0.01)
+        bar = client.get("/statusbar").text
+        # 任务名里已经有账号名，不再重复
+        assert bar.count("alice") == 1
+        assert "已检查 50 / 200 张" in bar and "25%" in bar
+        jobs.current.name = "完整运行"
+        bar = client.get("/statusbar").text
+        assert "alice（第 1/2 个账号）" in bar
+    finally:
+        release.set()
+        jobs.wait(10)
+
+
+def test_statusbar_reports_failure_and_login(client):
+    client.post("/accounts", data={"name": "alice", "apple_id": "alice@example.com"})
+    client.app_state.jobs.submit("归档", lambda p: 1 / 0)
+    client.app_state.jobs.wait(10)
+    bar = client.get("/statusbar").text
+    assert "归档失败" in bar and "alice 需要登录" in bar
 
 
 def test_static_files(client):
