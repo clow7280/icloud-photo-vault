@@ -24,11 +24,10 @@
 <div class="overview">
   <div class="card flush fill">
     <div class="card-title">
-      <h3>照片按拍摄年份</h3>
+      <h3>数量统计</h3>
       <div class="legend">
-        <span><i class="sw two"></i>两份副本</span>
-        <span><i class="sw one"></i>只有 NAS 一份</span>
-        <span><i class="sw none"></i>未备份</span>
+        <span><i class="sw photo"></i>照片</span>
+        <span><i class="sw video"></i>视频</span>
         <span><i class="sw del"></i>已从 iCloud 删除</span>
       </div>
     </div>
@@ -41,15 +40,15 @@
       <div class="ydivider">以下早于 {{ cutoff_month }}，超出 {{ auto_years }} 年保留期</div>
       {% endif %}
       {% set label = "没有日期" if y.year == "unknown" else y.year %}
+      {% set photos = y.in_icloud - y.videos %}
       <div class="yrow">
         <span class="ylabel">{{ label }}</span>
         <div class="ybar">
-          {% for key, cls, name in [("two", "two", "两份副本"), ("one", "one", "只有 NAS 一份"), ("none", "none", "未备份"), ("del", "del", "已从 iCloud 删除")] %}
-          {% set n = y.two_copies if key == "two" else (y.backed_up - y.two_copies) if key == "one" else (y.in_icloud - y.backed_up) if key == "none" else y.deleted %}
-          {% if n > 0 %}<span class="{{ cls }}" style="width: {{ (100 * n / ns.max) | round(2) }}%" title="{{ label }} · {{ name }} {{ n }} 张"></span>{% endif %}
+          {% for cls, name, n in [("photo", "照片", photos), ("video", "视频", y.videos), ("del", "已从 iCloud 删除", y.deleted)] %}
+          {% if n > 0 %}<span class="{{ cls }}" style="width: {{ (100 * n / ns.max) | round(2) }}%" title="{{ label }} · {{ name }} {{ n }} {{ '个' if cls == 'video' else '张' }}"></span>{% endif %}
           {% endfor %}
         </div>
-        <span class="yvalue">{{ y.in_icloud }}{% if y.deleted %} <span class="muted">/ 删 {{ y.deleted }}</span>{% endif %}</span>
+        <span class="yvalue">照片 {{ photos }} · 视频 {{ y.videos }}{% if y.deleted %} <span class="muted">· 删 {{ y.deleted }}</span>{% endif %}</span>
       </div>
       {% else %}
       <div class="empty">还没有同步过照片</div>

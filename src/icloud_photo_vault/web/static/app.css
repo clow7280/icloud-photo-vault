@@ -15,11 +15,11 @@
   --bad: #c33131;
   --bad-weak: #fbe9e9;
   --radius: 10px;
-  /* 年份图：蓝色深浅表示保护程度，黄色表示未备份，灰色表示已删除 */
-  --c-two: #2a78d6;
-  --c-one: #86b6ef;
-  --c-none: #fab219;
+  /* 数量统计：蓝色是照片，橙色是视频，灰色是已从 iCloud 删除 */
+  --c-photo: #2a78d6;
+  --c-video: #eb6834;
   --c-del: #b9b8b2;
+  --c-none: #fab219;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -39,8 +39,8 @@
     --warn-weak: #33270f;
     --bad: #f07272;
     --bad-weak: #371a1a;
-    --c-two: #5598e7;
-    --c-one: #1c5cab;
+    --c-photo: #3987e5;
+    --c-video: #d95926;
     --c-del: #5a5955;
   }
 }
@@ -356,13 +356,12 @@ a.list-row:hover { background: var(--hover); text-decoration: none; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-left: auto; color: var(--muted); font-size: 11px; }
 .legend span { display: inline-flex; align-items: center; gap: 4px; }
 .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
-.sw.two, .ybar .two { background: var(--c-two); }
-.sw.one, .ybar .one { background: var(--c-one); }
-.sw.none, .ybar .none { background: var(--c-none); }
+.sw.photo, .ybar .photo { background: var(--c-photo); }
+.sw.video, .ybar .video { background: var(--c-video); }
 .sw.del, .ybar .del { background: var(--c-del); }
 
 .chart { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 16px 10px; }
-.yrow { display: grid; grid-template-columns: 56px minmax(0, 1fr) 96px; align-items: center; gap: 10px; height: 24px; }
+.yrow { display: grid; grid-template-columns: 56px minmax(0, 1fr) 176px; align-items: center; gap: 10px; height: 24px; }
 .ylabel { color: var(--muted); font-variant-numeric: tabular-nums; }
 .ybar { display: flex; gap: 2px; height: 12px; }
 .ybar span { min-width: 2px; }

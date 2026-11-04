@@ -72,7 +72,7 @@ def test_overview_shows_metrics(client):
     add_and_login(client)
     page = client.get("/").text
     assert 'http-equiv="refresh"' not in page
-    for text in ("备份进度", "可释放空间", "照片按拍摄年份", "运行状况", "归档密码"):
+    for text in ("备份进度", "可释放空间", "数量统计", "运行状况", "归档密码"):
         assert text in page
     assert "未设置，归档和自动清理不会运行" in page
     with client.app_state.db.connect() as conn:
@@ -80,6 +80,10 @@ def test_overview_shows_metrics(client):
     assert total == 40
     assert f"照片 {total - videos} · 视频 {videos}" in page
     assert "全部已备份" in page
+    # 数量统计按年份分开显示照片和视频
+    assert 'class="photo"' in page and 'class="video"' in page
+    rows = re.findall(r'<span class="yvalue">照片 (\d+) · 视频 (\d+)', page)
+    assert sum(int(p) for p, _ in rows) == total - videos and sum(int(v) for _, v in rows) == videos
 
 
 def test_library_progress_uses_icloud_count():
