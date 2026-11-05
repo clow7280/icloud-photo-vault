@@ -72,22 +72,22 @@ def test_statusbar_shows_task_once(client):
     release = threading.Event()
 
     def task(progress):
-        jobs.syncing = {"index": 1, "total": 2, "name": "alice"}
+        progress.syncing = {"index": 1, "total": 2, "name": "alice"}
         progress("已检查 50 / 200 张，下载 60 个文件", 50, 200)
         release.wait(10)
         return ""
 
-    jobs.submit("同步 alice", task)
+    running = jobs.submit("同步 alice", task).task
     try:
         for _ in range(100):
-            if jobs.meter:
+            if running.meter:
                 break
             threading.Event().wait(0.01)
         bar = client.get("/statusbar").text
         # 任务名里已经有账号名，不再重复
         assert bar.count("alice") == 1
         assert "已检查 50 / 200 张" in bar and "25%" in bar
-        jobs.current.name = "完整运行"
+        running.name = "完整运行"
         bar = client.get("/statusbar").text
         assert "alice（第 1/2 个账号）" in bar
     finally:
@@ -315,13 +315,78 @@ def test_rename_account(client, cfg):
     assert "alice 改为 小红" in events(client)
 
 
-def test_rename_waits_for_running_job(client):
+def test_rename_refused_while_account_in_use(client):
     add_and_login(client)
+    add_and_login(client, "bob")
+    jobs = client.app_state.jobs
     release = threading.Event()
-    client.app_state.jobs.submit("占位", lambda p: release.wait(10) and "")
+    # 只用到 bob 的重任务不影响给 alice 改名
+    jobs.submit("占位", lambda p: release.wait(10) and "", accounts=frozenset({2}))
     try:
         r = client.post("/accounts/1/rename", data={"name": "小红"})
-        assert "有任务正在运行" in r.text
+        assert "已把 alice 改名为 小红" in r.text
+        # 排队中的完整运行会用到所有账号
+        assert "已加入队列" in client.post("/jobs/cycle").text
+        r = client.post("/accounts/1/rename", data={"name": "小绿"})
+        assert "有任务正在使用或等待使用这个账号" in r.text
     finally:
         release.set()
-        client.app_state.jobs.wait(10)
+        jobs.wait(30)
+
+
+def test_queue_runs_after_current_task_and_dedupes(client):
+    add_and_login(client)
+    jobs = client.app_state.jobs
+    release = threading.Event()
+    jobs.submit("占位", lambda p: release.wait(10) and "", key="hold")
+    try:
+        assert "排在第 1 位" in client.post("/jobs/sync/1").text
+        assert "“同步 alice”已经在排队" in client.post("/jobs/sync/1").text
+        assert "排在第 2 位" in client.post("/jobs/archive").text
+        bar = client.get("/statusbar").text
+        assert "2 个在排队" in bar and 'data-running="1"' in bar
+        page = client.get("/log?view=tasks").text
+        assert page.count(">排队中</span>") == 2 and "排在第 2 位" in page
+        archive = jobs.snapshot()[1][1]
+        r = client.post(f"/jobs/{archive.id}/cancel")
+        assert "已取消“归档”" in r.text
+        assert "已经开始运行或已经结束" in client.post(f"/jobs/{archive.id}/cancel").text
+        assert "取消了排队中的任务：归档" in events(client)
+        assert "同步 alice，已加入队列" in events(client)
+    finally:
+        release.set()
+        assert jobs.wait(30)
+    names = [t.name for t in jobs.history]
+    assert names[:3] == ["同步 alice", "占位", "归档"]
+    assert [t.state for t in jobs.history[:3]] == ["done", "done", "cancelled"]
+    bar = client.get("/statusbar").text
+    # 取消的任务不算“上次任务”
+    assert "上次任务：同步 alice" in bar
+
+
+def test_manual_delete_runs_beside_other_account_sync(client):
+    add_and_login(client)
+    run_cycle(client)
+    jobs = client.app_state.jobs
+    release = threading.Event()
+    # 正在同步另一个账号，不影响删除 alice 的照片
+    jobs.submit("同步 bob", lambda p: release.wait(10) and "", key="sync:2", accounts=frozenset({2}))
+    try:
+        page = client.get("/cleanup?account=1").text
+        month = next(m for m, n in re.findall(r'name="months" value="([^"]+)" data-count="(\d+)"', page) if int(n) and m != "unknown")
+        review = client.get(f"/cleanup?account=1&review=manual&months={month}").text
+        expected = int(re.search(r'name="expected" value="(\d+)"', review).group(1))
+        form = {"account": 1, "expected": expected, "months": month, "confirm": "yes"}
+        r = client.post("/cleanup/delete", data=form)
+        assert f"已开始删除 {expected} 张照片" in r.text
+        for _ in range(500):
+            if jobs.history and jobs.history[0].name == "清理 alice":
+                break
+            threading.Event().wait(0.01)
+        assert jobs.history[0].name == "清理 alice"
+        # 同步 alice 和正在运行的同步 bob 都是重任务，要排队
+        assert "排在第 1 位" in client.post("/jobs/sync/1").text
+    finally:
+        release.set()
+        assert jobs.wait(30)
+

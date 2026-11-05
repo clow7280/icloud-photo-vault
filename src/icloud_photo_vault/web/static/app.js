@@ -96,11 +96,10 @@
   const url = document.body.dataset.statusbarUrl;
   if (!url || !document.getElementById("statusbar")) return;
   const isRunning = () => document.getElementById("statusbar").dataset.running === "1";
-  // 本页打开期间有任务结束，就一直提示刷新
-  let finished = false;
+  // 本页打开期间有任务结束，就一直提示刷新。多个任务排队时，每结束一个都算
+  const finishedAtLoad = document.getElementById("statusbar").dataset.finished;
 
   async function poll() {
-    const wasRunning = isRunning();
     try {
       const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
       if (response.ok) {
@@ -109,8 +108,7 @@
         const bar = template.content.firstElementChild;
         if (bar && bar.id === "statusbar") {
           document.getElementById("statusbar").replaceWith(bar);
-          if (wasRunning && !isRunning()) finished = true;
-          if (finished && !isRunning()) {
+          if (bar.dataset.finished !== finishedAtLoad) {
             const link = document.createElement("a");
             link.href = "#";
             link.className = "sb-refresh";

@@ -21,7 +21,7 @@ from ..config import Config
 from ..db import Database, utcnow
 from ..backup import month_key
 from ..deletion import auto_delete_plan, cutoff_month, manual_delete_preview, years_before
-from ..jobs import Jobs, Scheduler
+from ..jobs import Jobs, Scheduler, Submission, Task
 from ..source import Backend, FakeBackend, SourceError
 from ..stats import StatsCache, totals, year_stats
 
@@ -30,6 +30,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 NAV = {"index.html": "overview", "cleanup.html": "cleanup", "log.html": "log", "settings.html": "settings"}
 AUTO_MODES = {"off": "关闭", "report": "只生成报告", "on": "自动清理"}
 LOG_VIEWS = {"events": "操作记录", "tasks": "任务", "deletions": "删除记录"}
+TASK_STATES = {"queued": "排队中", "running": "运行中", "done": "完成", "failed": "失败", "cancelled": "已取消"}
 MONTH = re.compile(r"^(\d{4}-\d{2}|unknown)$")
 ACCOUNT_NAME = re.compile(r"^[^/\\.\s][^/\\\s]{0,31}$")
 ACCOUNT_NAME_RULE = "账号名称用作目录名，不能含空格、斜杠，不能以点开头，最长 32 个字符"
@@ -144,23 +145,33 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
 
     local_time = make_local_time(cfg)
 
+    def describe(task: Task) -> dict:
+        syncing, meter = task.syncing, task.meter
+        return {
+            "name": task.name,
+            # 任务名里已经有账号名时（例如“同步 小红”）不再重复显示
+            "account": syncing if syncing and syncing["name"] not in task.name else None,
+            "step": task.step,
+            "done": meter[0] if meter else None,
+            "total": meter[1] if meter else None,
+            "percent": min(100, int(100 * meter[0] / meter[1])) if meter else None,
+        }
+
+    def last_finished(history: list[Task]) -> Task | None:
+        """最近一个运行过的任务，排队时被取消的不算。"""
+        return next((t for t in history if t.state != "cancelled"), None)
+
     def status_payload() -> dict:
         """底部状态栏的内容，页面渲染和轮询共用。"""
-        current = jobs.current
-        task = None
-        if current is not None:
-            syncing = jobs.syncing
-            meter = jobs.meter
-            task = {
-                "name": current.name,
-                # 任务名里已经有账号名时（例如“同步 小红”）不再重复显示
-                "account": syncing if syncing and syncing["name"] not in current.name else None,
-                "step": jobs.progress,
-                "done": meter[0] if meter else None,
-                "total": meter[1] if meter else None,
-                "percent": min(100, int(100 * meter[0] / meter[1])) if meter else None,
-            }
-        last = jobs.history[0] if jobs.history else None
+        running, queued, history = jobs.snapshot()
+        # 同时运行多个任务时，主要显示重任务，其他的只显示数量
+        main = next((t for t in running if t.heavy), running[0] if running else None)
+        more = []
+        if len(running) > 1:
+            more.append(f"另有 {len(running) - 1} 个在运行")
+        if queued:
+            more.append(f"{len(queued)} 个在排队")
+        last = last_finished(history)
         with db.connect() as conn:
             accounts = conn.execute("SELECT id, name, auth_state FROM accounts ORDER BY id").fetchall()
         need_login = [{"id": a["id"], "name": a["name"]} for a in accounts if a["auth_state"] != "ok"]
@@ -170,8 +181,11 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
             due = datetime.fromisoformat(last_cycle) + timedelta(hours=db.get_int("sync_interval_hours"))
             next_cycle = local_time(due.isoformat()) if due > datetime.now(UTC) else None
         return {
-            "running": jobs.running(),
-            "task": task,
+            "running": bool(running or queued),
+            "task": describe(main) if main else None,
+            "more": "，".join(more),
+            "queued": len(queued),
+            "finished": jobs.finished_count,
             "last": None
             if last is None
             else {"name": last.name, "ok": last.ok, "summary": last.summary, "finished_at": local_time(last.finished_at)},
@@ -179,6 +193,20 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
             "last_cycle": local_time(last_cycle),
             "next_cycle": next_cycle,
         }
+
+    def submitted(sub: Submission, started: str) -> str:
+        """提交任务后给用户看的说明。"""
+        if sub.outcome == "started":
+            return started
+        if sub.outcome == "queued":
+            return f"已加入队列，排在第 {sub.position} 位，前面的任务结束后自动开始"
+        if sub.task.state == "running":
+            return f"“{sub.task.name}”已经在运行，不用重复提交"
+        return f"“{sub.task.name}”已经在排队，不用重复提交"
+
+    def record_submission(request: Request, sub: Submission, action: str, detail: str, account_id: int | None = None):
+        if sub.outcome in ("started", "queued"):
+            record(request, action, detail + ("，已加入队列" if sub.outcome == "queued" else ""), account_id)
 
     def render(request: Request, name: str, **context) -> HTMLResponse:
         context.setdefault("active", NAV.get(name))
@@ -268,7 +296,7 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
         mode = db.get_setting("auto_delete_mode")
         items.append({"label": "自动清理", "state": "info", "href": "/cleanup",
                       "value": f"{AUTO_MODES[mode]} · 保留最近 {db.get_int('auto_delete_years')} 年"})
-        last = jobs.history[0] if jobs.history else None
+        last = last_finished(jobs.history)
         if last:
             items.append({"label": "最近任务", "state": "ok" if last.ok else "bad", "href": "/log?view=tasks",
                           "value": f"{last.name}{'完成' if last.ok else '失败'} · {local_time(last.finished_at)}"})
@@ -422,10 +450,12 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
     def after_login(account: sqlite3.Row) -> str:
         """登录成功后马上同步这个账号，只下载，不删除。"""
         account_id = account["id"]
-        started = jobs.submit(f"同步 {account['name']}", lambda p: "\n".join(jobs.sync(p, account_id)[0]))
-        if started:
+        sub = jobs.submit_sync(account_id, account["name"])
+        if sub.outcome == "started":
             return "登录成功，已开始同步这个账号"
-        return "登录成功，其他任务结束后会在下一轮同步这个账号"
+        if sub.outcome == "queued":
+            return "登录成功，前面的任务结束后会自动同步这个账号"
+        return "登录成功，这个账号的同步已经在运行或排队"
 
     @router.post("/accounts/{account_id}/rename")
     def rename(request: Request, account_id: int, name: Annotated[str, Form()]):
@@ -435,7 +465,7 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
             return back(url, err=ACCOUNT_NAME_RULE)
         with db.connect() as conn:
             old_name = get_account(conn, account_id)["name"]
-        # 作为任务运行，避免和同步、归档同时操作目录
+        # 作为任务运行，避免和同步、归档、删除同时操作这个账号的目录
         outcome: dict[str, str] = {}
 
         def task(_progress) -> str:
@@ -446,9 +476,10 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
                 raise
             return outcome["msg"]
 
-        if not jobs.submit(f"改名为 {name}", task):
-            return back(url, err="有任务正在运行，请等它结束后再改名")
-        jobs.wait(60)
+        sub = jobs.submit_rename(account_id, name, task)
+        if sub.outcome != "started":
+            return back(url, err="有任务正在使用或等待使用这个账号，请等它们结束后再改名")
+        sub.task.finished.wait(60)
         if "msg" in outcome:
             if old_name != name:
                 record(request, "改名", f"{old_name} 改为 {name}", account_id)
@@ -470,27 +501,32 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
 
     @router.post("/jobs/cycle")
     def run_cycle(request: Request):
-        if not jobs.submit("完整运行", jobs.cycle):
-            return back("/", err="已有任务在运行")
-        record(request, "启动任务", "完整运行：同步、归档、自动清理")
-        return back("/", msg="已开始：同步、归档、自动清理")
+        sub = jobs.submit_cycle()
+        record_submission(request, sub, "启动任务", "完整运行：同步、归档、自动清理")
+        return back("/", msg=submitted(sub, "已开始：同步、归档、自动清理"))
 
     @router.post("/jobs/sync/{account_id}")
     def run_sync(request: Request, account_id: int):
         with db.connect() as conn:
             account = get_account(conn, account_id)
-        url = f"/accounts/{account_id}"
-        if not jobs.submit(f"同步 {account['name']}", lambda p: "\n".join(jobs.sync(p, account_id)[0])):
-            return back(url, err="已有任务在运行")
-        record(request, "启动任务", f"同步 {account['name']}", account_id)
-        return back(url, msg="已开始同步")
+        sub = jobs.submit_sync(account_id, account["name"])
+        record_submission(request, sub, "启动任务", f"同步 {account['name']}", account_id)
+        return back(f"/accounts/{account_id}", msg=submitted(sub, "已开始同步"))
 
     @router.post("/jobs/archive")
     def run_archive_job(request: Request):
-        if not jobs.submit("归档", lambda p: "\n".join(jobs.archive(p))):
-            return back("/", err="已有任务在运行")
-        record(request, "启动任务", "归档")
-        return back("/", msg="已开始归档")
+        sub = jobs.submit_archive()
+        record_submission(request, sub, "启动任务", "归档")
+        return back("/", msg=submitted(sub, "已开始归档"))
+
+    @router.post("/jobs/{task_id}/cancel")
+    def cancel_job(request: Request, task_id: int):
+        url = "/log?view=tasks"
+        task = jobs.cancel(task_id)
+        if task is None:
+            return back(url, err="这个任务已经开始运行或已经结束，不能取消")
+        record(request, "取消任务", f"取消了排队中的任务：{task.name}", next(iter(task.accounts or []), None))
+        return back(url, msg=f"已取消“{task.name}”")
 
     # ---- 空间清理：人工选择月份删除，和按规则自动清理，共用一张月份表 ----
 
@@ -580,10 +616,14 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
             return back(review, err="清单已经变化，请重新核对后再确认")
         if not asset_ids:
             return back(review, err="没有可以删除的照片")
-        if not jobs.submit(f"清理 {name}", lambda p: jobs.manual_delete(p, account, asset_ids)):
-            return back(review, err="已有任务在运行，请等它结束后再删除")
-        record(request, "人工删除", f"{name}：从 iCloud 删除 {len(asset_ids)} 张，月份 {month_ranges(months)}", account)
-        return back(cleanup_url(account), msg=f"已开始删除 {len(asset_ids)} 张照片，进度见底部状态栏")
+        sub = jobs.submit_manual_delete(account, name, asset_ids)
+        detail = f"{name}：从 iCloud 删除 {len(asset_ids)} 张，月份 {month_ranges(months)}"
+        record_submission(request, sub, "人工删除", detail, account)
+        if sub.outcome == "queued":
+            msg = f"删除 {len(asset_ids)} 张照片{submitted(sub, '')}。删除前会逐张重新检查备份"
+        else:
+            msg = submitted(sub, f"已开始删除 {len(asset_ids)} 张照片，进度见底部状态栏")
+        return back(cleanup_url(account), msg=msg)
 
     @router.post("/cleanup/rule")
     def cleanup_rule(
@@ -634,7 +674,8 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
                     """
                 ).fetchall()
             else:
-                context["rows"] = list(jobs.history)
+                running, queued, history = jobs.snapshot()
+                context.update(rows=running + queued + history, queued_ids=[t.id for t in queued], states=TASK_STATES)
         return render(request, "log.html", **context)
 
     @router.get("/settings", response_class=HTMLResponse)

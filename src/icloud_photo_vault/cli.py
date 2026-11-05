@@ -72,7 +72,7 @@ def main() -> None:
     elif args.command == "cycle":
         app = create_app(cfg, start_scheduler=False)
         jobs = app.state.jobs
-        jobs.submit("命令行运行", jobs.cycle)
+        jobs.submit_cycle("命令行运行")
         jobs.wait()
         print(jobs.history[0].summary)
 

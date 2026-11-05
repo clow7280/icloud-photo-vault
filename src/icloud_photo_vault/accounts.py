@@ -36,7 +36,7 @@ class RenameError(Exception):
 def rename_account(db: Database, cfg: Config, account_id: int, new_name: str) -> str:
     """改名，并移动这个账号的备份目录和归档包。任何一步失败都撤销已经做过的移动。
 
-    调用方要保证这时没有其他任务在运行。
+    调用方要保证这时没有其他任务用到这个账号，也没有用到所有账号的任务。
     """
     with db.connect() as conn:
         account = conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()

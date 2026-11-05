@@ -4,7 +4,7 @@
 <div class="page-head">
   <div>
     <h1>日志</h1>
-    <p class="subtitle">{% if view == "events" %}在界面上做过的重要操作，长期保存。{% elif view == "tasks" %}最近 20 个任务，服务重启后清空。{% else %}每一张从 iCloud 删除的照片，长期保存。{% endif %}</p>
+    <p class="subtitle">{% if view == "events" %}在界面上做过的重要操作，长期保存。{% elif view == "tasks" %}正在运行、排队中和最近结束的 20 个任务，服务重启后清空。{% else %}每一张从 iCloud 删除的照片，长期保存。{% endif %}</p>
   </div>
   <nav class="segmented">
     {% for key, label in views.items() %}<a href="{{ base }}/log?view={{ key }}" class="{{ 'active' if view == key }}">{{ label }}</a>{% endfor %}
@@ -33,10 +33,16 @@
     <tbody>
     {% for job in rows %}
     <tr>
-      <td>{{ job.name }} {% if job.ok %}<span class="badge ok">完成</span>{% else %}<span class="badge bad">失败</span>{% endif %}</td>
+      <td>{{ job.name }} <span class="badge {{ {'running': 'info', 'done': 'ok', 'failed': 'bad'}.get(job.state, '') }}">{{ states[job.state] }}</span></td>
       <td>{{ job.started_at | local }}</td>
       <td>{{ job.finished_at | local }}</td>
-      <td class="wrap"><pre class="summary">{{ job.summary }}</pre></td>
+      <td class="wrap">
+        {%- if job.state == "queued" %}
+        <div class="row-actions"><span class="muted">排在第 {{ queued_ids.index(job.id) + 1 }} 位，前面的任务结束后自动开始</span>
+          <form method="post" action="{{ base }}/jobs/{{ job.id }}/cancel" data-confirm="取消排队中的任务“{{ job.name }}”？" data-busy="正在取消…"><button type="submit" class="small">取消</button></form></div>
+        {%- elif job.state == "running" %}<span class="muted">{{ job.step }}</span>
+        {%- else %}<pre class="summary">{{ job.summary }}</pre>{% endif %}
+      </td>
     </tr>
     {% else %}
     <tr><td colspan="4" class="empty">服务启动以来还没有运行过任务</td></tr>

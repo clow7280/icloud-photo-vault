@@ -1,11 +1,17 @@
-"""后台任务：同一时间只运行一个任务，并按设定的间隔定时运行完整一轮。"""
+"""后台任务：按冲突关系排队运行，并按设定的间隔定时运行完整一轮。
 
+同步、归档这类重任务占用网络、CPU 和 Apple 的请求额度，一次只运行一个。
+人工删除、改名这类轻任务只用到一个账号，和正在运行、正在排队的任务都不冲突时马上运行。
+"""
+
+import hashlib
+import itertools
 import logging
 import threading
 import traceback
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from .archive import run_archive
@@ -13,19 +19,61 @@ from .backup import sync_account
 from .config import Config
 from .db import Database, utcnow
 from .deletion import auto_delete_plan, execute_deletion
-from .progress import Progress
 from .source import Backend, LoginRequired, PhotoSource
 
 log = logging.getLogger(__name__)
 
+HISTORY_SIZE = 20
 
-@dataclass
-class JobRecord:
+
+@dataclass(eq=False)
+class Task:
+    """一个任务。本身可以当作进度回调传给同步、归档和删除。"""
+
+    id: int
     name: str
-    started_at: str
+    fn: Callable[["Task"], str]
+    # 去重用：同一个 key 正在运行或排队时不再加入。None 表示不去重
+    key: str | None
+    # 用到的账号，None 表示所有账号
+    accounts: frozenset[int] | None
+    heavy: bool
+    queued_at: str
+    # queued 排队中，running 运行中，done 完成，failed 失败，cancelled 已取消
+    state: str = "queued"
+    started_at: str | None = None
     finished_at: str | None = None
     summary: str = ""
-    ok: bool = True
+    step: str = ""
+    # 进度条用的完成数和总数，不知道时为 None
+    meter: tuple[int, int] | None = None
+    # 正在同步第几个账号，给状态栏显示
+    syncing: dict | None = None
+    finished: threading.Event = field(default_factory=threading.Event, repr=False)
+
+    @property
+    def ok(self) -> bool:
+        return self.state != "failed"
+
+    def __call__(self, message: str, done: int | None = None, total: int | None = None) -> None:
+        self.step = message
+        self.meter = (done, total) if done is not None and total else None
+
+    def conflicts(self, other: "Task") -> bool:
+        if self.heavy and other.heavy:
+            return True
+        if self.accounts is None or other.accounts is None:
+            return True
+        return bool(self.accounts & other.accounts)
+
+
+@dataclass
+class Submission:
+    # started 已开始，queued 已排队，duplicate 同样的任务已经在运行或排队，busy 有冲突且不能排队
+    outcome: str
+    task: Task
+    # 排队时是队列中的第几个
+    position: int = 0
 
 
 class Jobs:
@@ -33,62 +81,154 @@ class Jobs:
         self.db = db
         self.cfg = cfg
         self.backend = backend
-        # 任务结束后调用，网页用它让统计缓存失效
+        # 每个任务结束后调用，网页用它让统计缓存失效
         self.on_finish = on_finish
-        self._lock = threading.Lock()
-        self._thread: threading.Thread | None = None
-        self.current: JobRecord | None = None
-        self.progress = ""
-        # 进度条用的完成数和总数，不知道时为 None
-        self.meter: tuple[int, int] | None = None
-        # 正在同步第几个账号，给状态栏显示
-        self.syncing: dict | None = None
-        self.history: deque[JobRecord] = deque(maxlen=20)
+        self._cond = threading.Condition()
+        self._ids = itertools.count(1)
+        self._running: list[Task] = []
+        self._queue: list[Task] = []
+        self._history: deque[Task] = deque(maxlen=HISTORY_SIZE)
+        # 服务启动以来结束的任务数，网页用它判断要不要提示刷新
+        self.finished_count = 0
 
-    def running(self) -> bool:
-        with self._lock:
-            return self._thread is not None and self._thread.is_alive()
+    # ---- 排队和运行 ----
 
-    def submit(self, name: str, fn: Callable[[Progress], str]) -> bool:
-        with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                return False
-            record = JobRecord(name=name, started_at=utcnow())
-            self.current = record
-            self.progress = "开始运行"
-            self.meter = None
-            self._thread = threading.Thread(target=self._run, args=(record, fn), daemon=True)
-            self._thread.start()
-            return True
+    def submit(
+        self,
+        name: str,
+        fn: Callable[[Task], str],
+        *,
+        key: str | None = None,
+        accounts: frozenset[int] | None = None,
+        heavy: bool = True,
+        queue: bool = True,
+    ) -> Submission:
+        """不指定账号和轻重时按最保守的方式处理：用到所有账号，和其他任务都冲突。"""
+        with self._cond:
+            if key is not None:
+                for other in self._running + self._queue:
+                    if other.key == key:
+                        return Submission("duplicate", other)
+            task = Task(next(self._ids), name, fn, key, accounts, heavy, utcnow())
+            blocked = any(task.conflicts(other) for other in self._running + self._queue)
+            if blocked and not queue:
+                return Submission("busy", task)
+            self._queue.append(task)
+            self._dispatch()
+            # 不能看 task.state：很快的任务这时可能已经运行完了
+            if task in self._queue:
+                return Submission("queued", task, self._queue.index(task) + 1)
+            return Submission("started", task)
 
-    def wait(self, timeout: float | None = None) -> None:
-        thread = self._thread
-        if thread is not None:
-            thread.join(timeout)
+    def _dispatch(self) -> None:
+        """按排队顺序启动可以运行的任务：不能和正在运行的任务冲突，也不能和排在前面的任务冲突。
 
-    def _set_progress(self, message: str, done: int | None = None, total: int | None = None) -> None:
-        self.progress = message
-        self.meter = (done, total) if done is not None and total else None
+        调用方要持有 self._cond。
+        """
+        blockers = list(self._running)
+        for task in list(self._queue):
+            if not any(task.conflicts(other) for other in blockers):
+                self._queue.remove(task)
+                task.state = "running"
+                task.started_at = utcnow()
+                task.step = "开始运行"
+                self._running.append(task)
+                threading.Thread(target=self._run, args=(task,), daemon=True, name=f"task-{task.id}").start()
+            blockers.append(task)
 
-    def _run(self, record: JobRecord, fn: Callable[[Progress], str]) -> None:
+    def _run(self, task: Task) -> None:
         try:
-            record.summary = fn(self._set_progress)
+            task.summary = task.fn(task)
+            task.state = "done"
         except Exception as e:
-            log.error("任务 %s 失败：%s", record.name, traceback.format_exc())
-            record.summary = f"失败：{e}"
-            record.ok = False
-        record.finished_at = utcnow()
+            log.error("任务 %s 失败：%s", task.name, traceback.format_exc())
+            task.summary = f"失败：{e}"
+            task.state = "failed"
+        task.finished_at = utcnow()
+        task.step, task.meter, task.syncing = "", None, None
         if self.on_finish is not None:
             try:
                 self.on_finish()
             except Exception:
                 log.exception("任务结束后的回调失败")
-        with self._lock:
-            self.history.appendleft(record)
-            self.current = None
-            self.progress = ""
-            self.meter = None
-            self.syncing = None
+        with self._cond:
+            self._running.remove(task)
+            self._history.appendleft(task)
+            self.finished_count += 1
+            self._dispatch()
+            self._cond.notify_all()
+        task.finished.set()
+
+    def cancel(self, task_id: int) -> Task | None:
+        """取消排队中的任务。已经开始运行的任务不能取消，返回 None。"""
+        with self._cond:
+            task = next((t for t in self._queue if t.id == task_id), None)
+            if task is None:
+                return None
+            self._queue.remove(task)
+            task.state = "cancelled"
+            task.finished_at = utcnow()
+            task.summary = "排队时被取消"
+            self._history.appendleft(task)
+            self.finished_count += 1
+            # 被取消的任务可能挡着后面的任务
+            self._dispatch()
+            self._cond.notify_all()
+        task.finished.set()
+        return task
+
+    def busy(self) -> bool:
+        with self._cond:
+            return bool(self._running or self._queue)
+
+    def snapshot(self) -> tuple[list[Task], list[Task], list[Task]]:
+        """正在运行、排队中和最近结束的任务，按显示顺序排列。"""
+        with self._cond:
+            return list(self._running), list(self._queue), list(self._history)
+
+    @property
+    def history(self) -> list[Task]:
+        with self._cond:
+            return list(self._history)
+
+    def wait(self, timeout: float | None = None) -> bool:
+        """等所有任务结束，包括排队中的。返回是否已经全部结束。"""
+        with self._cond:
+            return self._cond.wait_for(lambda: not self._running and not self._queue, timeout)
+
+    # ---- 各类任务的提交方式 ----
+
+    def submit_cycle(self, name: str = "完整运行") -> Submission:
+        return self.submit(name, self.cycle, key="cycle")
+
+    def submit_sync(self, account_id: int, account_name: str) -> Submission:
+        return self.submit(
+            f"同步 {account_name}",
+            lambda task: "\n".join(self.sync(task, account_id)[0]),
+            key=f"sync:{account_id}",
+            accounts=frozenset({account_id}),
+        )
+
+    def submit_archive(self) -> Submission:
+        return self.submit("归档", lambda task: "\n".join(self.archive(task)), key="archive")
+
+    def submit_manual_delete(self, account_id: int, account_name: str, asset_ids: list[str]) -> Submission:
+        """删除时逐张重新检查备份，所以可以排队，晚一点执行也安全。同一份清单重复提交只排一次。"""
+        digest = hashlib.sha256("\n".join(sorted(asset_ids)).encode()).hexdigest()[:16]
+        return self.submit(
+            f"清理 {account_name}",
+            lambda task: self.manual_delete(task, account_id, asset_ids),
+            key=f"delete:{account_id}:{digest}",
+            accounts=frozenset({account_id}),
+            heavy=False,
+        )
+
+    def submit_rename(self, account_id: int, new_name: str, fn: Callable[[Task], str]) -> Submission:
+        """改名要马上看到结果，不排队：有任务用到这个账号时直接拒绝。"""
+        return self.submit(
+            f"改名为 {new_name}", fn, key=f"rename:{account_id}", accounts=frozenset({account_id}),
+            heavy=False, queue=False,
+        )
 
     # ---- 任务内容 ----
 
@@ -109,19 +249,19 @@ class Jobs:
                 )
             return None
 
-    def sync(self, progress: Progress, account_id: int | None = None) -> tuple[list[str], dict[int, PhotoSource]]:
+    def sync(self, task: Task, account_id: int | None = None) -> tuple[list[str], dict[int, PhotoSource]]:
         lines: list[str] = []
         sources: dict[int, PhotoSource] = {}
         accounts = self._accounts(account_id)
         for index, account in enumerate(accounts, 1):
-            self.syncing = {"index": index, "total": len(accounts), "name": account["name"]}
+            task.syncing = {"index": index, "total": len(accounts), "name": account["name"]}
             source = self._open(account)
             if source is None:
                 lines.append(f"{account['name']}：需要重新登录，已跳过")
                 continue
-            progress("正在查询 iCloud 照片数量")
+            task("正在查询 iCloud 照片数量")
             try:
-                r = sync_account(self.db, self.cfg.backup_root, self.cfg.timezone, account, source, progress)
+                r = sync_account(self.db, self.cfg.backup_root, self.cfg.timezone, account, source, task)
             except Exception as e:
                 log.error("同步 %s 中断：%s", account["name"], traceback.format_exc())
                 with self.db.connect() as conn:
@@ -136,17 +276,17 @@ class Jobs:
             if r.errors:
                 line += f"，{len(r.errors)} 个错误"
             lines.append(line)
-        self.syncing = None
+        task.syncing = None
         return lines, sources
 
-    def archive(self, progress: Progress) -> list[str]:
+    def archive(self, progress: Task) -> list[str]:
         progress("正在归档")
         r = run_archive(self.db, self.cfg, datetime.now(UTC), progress)
         lines = [f"归档：新打包 {r.built} 个月，{r.unchanged} 个月无变化"]
         lines += [f"归档错误：{e}" for e in r.errors[:5]]
         return lines
 
-    def auto_delete(self, progress: Progress, sources: dict[int, PhotoSource]) -> list[str]:
+    def auto_delete(self, progress: Task, sources: dict[int, PhotoSource]) -> list[str]:
         if self.db.get_setting("auto_delete_mode") != "on":
             return []
         years = self.db.get_int("auto_delete_years")
@@ -170,14 +310,14 @@ class Jobs:
             lines.append(f"{account['name']}：自动删除 {r.deleted} 张，跳过 {r.skipped} 张，失败 {len(r.errors)} 张")
         return lines
 
-    def cycle(self, progress: Progress) -> str:
+    def cycle(self, progress: Task) -> str:
         lines, sources = self.sync(progress)
         lines += self.archive(progress)
         lines += self.auto_delete(progress, sources)
         self.db.set_setting("last_cycle_at", utcnow())
         return "\n".join(lines)
 
-    def manual_delete(self, progress: Progress, account_id: int, asset_ids: list[str]) -> str:
+    def manual_delete(self, progress: Task, account_id: int, asset_ids: list[str]) -> str:
         account = self._accounts(account_id)[0]
         source = self._open(account)
         if source is None:
@@ -214,5 +354,6 @@ class Scheduler:
 
     def _loop(self) -> None:
         while not self._stop.wait(self.check_seconds):
-            if not self.jobs.running() and self.due(datetime.now(UTC)):
-                self.jobs.submit("定时运行", self.jobs.cycle)
+            # 上一轮还在运行或排队时，submit_cycle 不会重复加入
+            if self.due(datetime.now(UTC)):
+                self.jobs.submit_cycle("定时运行")

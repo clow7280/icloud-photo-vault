@@ -1,7 +1,7 @@
-{#- 底部状态栏：左边是当前任务，右边是需要留意的账号和下次自动运行。页面渲染和轮询共用 -#}
+{#- 底部状态栏：左边是当前任务和排队数量，右边是需要留意的账号和下次自动运行。页面渲染和轮询共用 -#}
 {%- set task = status.task %}
 {%- set acc = status.accounts %}
-<footer class="statusbar" id="statusbar" data-running="{{ '1' if status.running else '0' }}">
+<footer class="statusbar" id="statusbar" data-running="{{ '1' if status.running else '0' }}" data-finished="{{ status.finished }}">
   <div class="sb-task">
     {%- if task %}
     <span class="spinner"></span>
@@ -9,6 +9,7 @@
     {%- if task.account %}<span class="sb-sep">›</span><span>{{ task.account.name }}{% if task.account.total > 1 %}（第 {{ task.account.index }}/{{ task.account.total }} 个账号）{% endif %}</span>{% endif %}
     {%- if task.step %}<span class="sb-sep">›</span><span class="sb-step" title="{{ task.step }}">{{ task.step }}</span>{% endif %}
     {%- if task.percent is not none %}<span class="sb-meter" title="{{ task.done }} / {{ task.total }}"><span style="width: {{ task.percent }}%"></span></span><span class="sb-pct">{{ task.percent }}%</span>{% endif %}
+    {%- if status.more %}<span class="sb-sep">·</span><a class="sb-more" href="{{ base }}/log?view=tasks">{{ status.more }}</a>{% endif %}
     {%- elif status.last and not status.last.ok %}
     <span class="dot bad"></span><a href="{{ base }}/log?view=tasks" class="bad" title="{{ status.last.summary }}">{{ status.last.name }}失败</a><span class="muted">{{ status.last.finished_at }}</span>
     {%- else %}

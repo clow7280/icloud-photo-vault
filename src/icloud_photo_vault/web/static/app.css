@@ -138,6 +138,7 @@ h3 { font-size: 13px; margin: 0; }
 .sb-meter { width: 96px; height: 6px; margin-left: 4px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .sb-meter > span { display: block; height: 100%; border-radius: 3px; background: var(--primary); }
 .sb-pct { color: var(--muted); font-variant-numeric: tabular-nums; }
+.statusbar a.sb-more { color: var(--primary); }
 .sb-item { display: flex; align-items: center; gap: 6px; flex-shrink: 0; padding-left: 16px; border-left: 1px solid var(--line); }
 .statusbar .badge { padding: 0 6px; font-size: 11px; }
 .statusbar .spinner { width: 11px; height: 11px; color: var(--primary); }
@@ -312,6 +313,7 @@ dl.kv dt { color: var(--muted); }
 dl.kv dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; }
 
 pre.summary { margin: 0; font: inherit; white-space: pre-wrap; }
+.row-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 
 .spinner {
   flex-shrink: 0;
