@@ -18,8 +18,8 @@
 {% else %}
 <div class="stats kpis">
   <div><div class="label">iCloud 占用</div><div class="value">{{ total.icloud_bytes | bytes }}</div><div class="sub">{{ total.in_icloud }} 张，其中视频 {{ total.videos }} 个</div></div>
-  <div><div class="label">可以删除</div><div class="value">{{ total.backed_bytes | bytes }}</div><div class="sub">{{ total.backed_up }} 张已备份到 NAS</div></div>
-  <div><div class="label">其中有两份副本</div><div class="value ok">{{ total.two_copies_bytes | bytes }}</div><div class="sub">{{ total.two_copies }} 张</div></div>
+  <div><div class="label">可以删除</div><div class="value">{{ deletable.backed_bytes | bytes }}</div><div class="sub">{{ deletable.backed_up }} 张已备份到 NAS</div></div>
+  <div><div class="label">其中有两份副本</div><div class="value ok">{{ deletable.two_copies_bytes | bytes }}</div><div class="sub">{{ deletable.two_copies }} 张</div></div>
   <div><div class="label">符合自动清理</div><div class="value">{{ total.auto_bytes | bytes }}</div><div class="sub">{{ total.auto_ready }} 张，早于 {{ cutoff_month }}</div></div>
   <div><div class="label">已释放</div><div class="value">{{ total.deleted_bytes | bytes }}</div><div class="sub">{{ total.deleted }} 张已删除</div></div>
 </div>
@@ -59,9 +59,10 @@
     <tbody>
     {% for m in months if m.in_icloud %}
     {% set missing = m.in_icloud - m.backed_up %}
+    {% set undated = m.month == "unknown" %}
     <tr>
       <td class="pick"><input type="checkbox" name="months" value="{{ m.month }}" data-count="{{ m.backed_up }}" data-bytes="{{ m.backed_bytes }}"
-        {{ "checked" if m.month in selected }} {{ "disabled" if not m.backed_up }} aria-label="选择 {{ m.month }}"></td>
+        {{ "checked" if m.month in selected and not undated }} {{ "disabled" if undated or not m.backed_up }} aria-label="选择 {{ m.month }}"></td>
       <td>{{ "没有拍摄日期" if m.month == "unknown" else m.month }}</td>
       <td class="num">{{ m.in_icloud }}</td>
       <td class="num">{{ m.videos }}</td>
@@ -71,7 +72,7 @@
       <td class="num {{ 'warn' if missing }}">{{ missing }}</td>
       <td>
         {% if m.auto_ready %}<span class="badge info">{{ m.auto_ready }} 张</span>
-        {% elif m.month == "unknown" %}<span class="muted small">没有日期，不自动清理</span>
+        {% elif undated %}<span class="muted small">没有拍摄日期，不能删除</span>
         {% elif m.month < cutoff_month %}<span class="muted small">超出保留期，等待归档</span>
         {% else %}<span class="muted small">保留期内</span>{% endif %}
       </td>

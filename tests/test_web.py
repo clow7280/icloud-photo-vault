@@ -390,3 +390,16 @@ def test_manual_delete_runs_beside_other_account_sync(client):
         release.set()
         assert jobs.wait(30)
 
+
+def test_cleanup_page_does_not_offer_undated_photos(client):
+    add_and_login(client)
+    stats = client.app_state.stats
+    rows = stats.get(1, "")
+    undated = next(r for r in rows if r["month"] == "unknown")
+    assert undated["backed_up"] > 0
+    page = client.get("/cleanup?account=1").text
+    tag = re.search(r'<input type="checkbox" name="months" value="unknown"[^>]*>', page).group(0)
+    assert "disabled" in tag
+    assert "没有拍摄日期，不能删除" in page
+    dated = sum(r["backed_up"] for r in rows if r["month"] != "unknown")
+    assert f"{dated} 张已备份到 NAS" in page

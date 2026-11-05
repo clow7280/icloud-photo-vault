@@ -561,6 +561,8 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
             "account": current,
             "months": rows,
             "total": totals(rows),
+            # 没有拍摄日期的照片不能删除，不算进可以删除的数量
+            "deletable": totals([r for r in rows if r["month"] != "unknown"]),
             "mode": db.get_setting("auto_delete_mode"),
             "modes": AUTO_MODES,
             "years": years,
