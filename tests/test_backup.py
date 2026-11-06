@@ -1,7 +1,9 @@
 import hashlib
+import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime
 
+import pytest
 from conftest import make_asset
 
 from icloud_photo_vault.backup import sync_account
@@ -177,3 +179,73 @@ def test_failure_after_retries_is_summarized(db, cfg, account, library, monkeypa
     sync(db, cfg, account, library)
     with db.connect() as conn:
         assert conn.execute("SELECT last_sync_error FROM accounts").fetchone()[0] is None
+
+
+def test_batches_cover_every_asset(db, cfg, account, library, monkeypatch):
+    monkeypatch.setattr("icloud_photo_vault.backup.BATCH_SIZE", 3)
+    for i in range(7):
+        make_asset(library, f"a{i}", f"IMG_000{i}.HEIC", datetime(2023, 5, 12, tzinfo=UTC))
+
+    first = sync(db, cfg, account, library)
+    library.deleted.add("rec-a6")
+    second = sync(db, cfg, account, library)
+
+    assert (first.listed, first.new_assets, first.downloaded) == (7, 7, 7)
+    assert (second.listed, second.downloaded, second.gone) == (6, 0, 1)
+
+
+def test_one_connection_per_batch(db, cfg, account, library, monkeypatch):
+    for i in range(250):
+        make_asset(library, f"a{i}", f"IMG_{i:04d}.HEIC", datetime(2023, 5, 12, tzinfo=UTC))
+    sync(db, cfg, account, library)
+    opened = []
+    connect = db.connect
+    monkeypatch.setattr(db, "connect", lambda: (opened.append(1), connect())[1])
+
+    assert sync(db, cfg, account, library).downloaded == 0
+    # 查数量、3 批照片、最后标记不在 iCloud 的照片
+    assert len(opened) == 5
+
+
+def test_listing_error_keeps_assets_already_listed(db, cfg, account, library, monkeypatch):
+    from icloud_photo_vault.source import SourceError
+
+    for i in range(5):
+        make_asset(library, f"a{i}", f"IMG_000{i}.HEIC", datetime(2023, 5, 12, tzinfo=UTC))
+    sync(db, cfg, account, library)
+    make_asset(library, "new", "IMG_0009.HEIC", datetime(2023, 5, 12, tzinfo=UTC))
+    assets = library.assets
+
+    def broken():
+        yield from (assets[5], assets[0])
+        raise SourceError("列举中断")
+
+    monkeypatch.setattr(library, "iter_assets", broken)
+    with pytest.raises(SourceError):
+        sync(db, cfg, account, library)
+
+    # 中断前列出的照片已经备份，没列到的照片不会被当成已从 iCloud 删除
+    assert "original" in files_of(db, "new")
+    with db.connect() as conn:
+        states = {r["asset_id"]: r["state"] for r in conn.execute("SELECT asset_id, state FROM assets")}
+    assert set(states.values()) == {"in_icloud"} and len(states) == 6
+
+
+def test_download_does_not_hold_write_lock(db, cfg, account, library):
+    make_asset(library, "a1", "IMG_0001.HEIC", datetime(2023, 5, 12, tzinfo=UTC))
+    make_asset(library, "a2", "IMG_0002.HEIC", datetime(2023, 5, 12, tzinfo=UTC))
+    download = library.download
+
+    def download_and_write(asset, role, start=0):
+        # 另一个连接不等待锁，同步占着写锁时这里会报 database is locked
+        other = sqlite3.connect(db.path, timeout=0)
+        with other:
+            other.execute("UPDATE settings SET value = ? WHERE key = 'last_cycle_at'", (asset.asset_id,))
+        other.close()
+        yield from download(asset, role, start)
+
+    library.download = download_and_write
+    result = sync(db, cfg, account, library)
+
+    assert (result.failed, result.downloaded) == (0, 2)
+    assert db.get_setting("last_cycle_at") == "a2"

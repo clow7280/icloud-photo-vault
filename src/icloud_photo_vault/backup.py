@@ -5,6 +5,7 @@ import logging
 import os
 import sqlite3
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,6 +21,8 @@ UNKNOWN_MONTH = "unknown"
 MAX_ERRORS_KEPT = 50
 # 下载中断后等待几秒再接着下载，用完这些次数仍失败才算这张照片失败
 RETRY_DELAYS = (5, 30)
+# 每批照片共用一个数据库连接和事务
+BATCH_SIZE = 100
 
 
 @dataclass
@@ -243,36 +246,52 @@ def _upsert_asset(conn: sqlite3.Connection, account_id: int, asset: RemoteAsset,
 
 
 def backup_asset(
-    db: Database, account_id: int, account_dir: Path, source: PhotoSource, asset: RemoteAsset, month: str
+    conn: sqlite3.Connection, account_id: int, account_dir: Path, source: PhotoSource, asset: RemoteAsset, month: str
 ) -> tuple[int, int]:
-    """下载这张照片缺少或已变化的文件，返回下载的文件数和字节数。"""
-    with db.connect() as conn:
-        paths = assign_paths(conn, account_id, account_dir, asset, month)
+    """下载这张照片缺少或已变化的文件，返回下载的文件数和字节数。
+
+    写文件之前先提交，下载期间不占着数据库的写锁；文件写好后立即提交它的记录，
+    以免中断后磁盘上留下没有记录的文件，下次被当成别的照片占用的文件名。
+    """
+    paths = assign_paths(conn, account_id, account_dir, asset, month)
     files = 0
     total = 0
     for role, version in asset.versions.items():
         rel = paths[role]
         dest = account_dir / rel
-        with db.connect() as conn:
-            row = _get_file(conn, account_id, asset.asset_id, role)
+        row = _get_file(conn, account_id, asset.asset_id, role)
         if _file_ok(row, dest) and row["remote_checksum"] == version.checksum:
             continue
+        conn.commit()
         size, sha = fetch_version(source, asset, role, version, dest)
-        with db.connect() as conn:
-            _save_file(conn, account_id, asset.asset_id, role, rel, version.size, version.checksum, size, sha)
+        _save_file(conn, account_id, asset.asset_id, role, rel, version.size, version.checksum, size, sha)
+        conn.commit()
         files += 1
         total += size
     if asset.xmp is not None:
         rel = paths["xmp"]
         dest = account_dir / rel
         sha = hashlib.sha256(asset.xmp).hexdigest()
-        with db.connect() as conn:
-            row = _get_file(conn, account_id, asset.asset_id, "xmp")
+        row = _get_file(conn, account_id, asset.asset_id, "xmp")
         if not (_file_ok(row, dest) and row["sha256"] == sha):
+            conn.commit()
             write_xmp(asset.xmp, dest, asset.taken_at)
-            with db.connect() as conn:
-                _save_file(conn, account_id, asset.asset_id, "xmp", rel, len(asset.xmp), None, len(asset.xmp), sha)
+            _save_file(conn, account_id, asset.asset_id, "xmp", rel, len(asset.xmp), None, len(asset.xmp), sha)
+            conn.commit()
     return files, total
+
+
+def _take(assets: Iterator[RemoteAsset], n: int) -> tuple[list[RemoteAsset], Exception | None]:
+    """取出最多 n 张照片；列举中途出错时，返回已经取到的照片和这个错误。"""
+    batch: list[RemoteAsset] = []
+    try:
+        for asset in assets:
+            batch.append(asset)
+            if len(batch) == n:
+                break
+    except Exception as e:  # noqa: BLE001 调用方处理完已取到的照片后会原样抛出
+        return batch, e
+    return batch, None
 
 
 def sync_account(
@@ -304,26 +323,34 @@ def sync_account(
             )
         total = count.total
         progress(f"已检查 0 / {total} 张", 0, total, note=f"iCloud 共 {count.total} 张，其中视频 {count.videos} 个")
-    for asset in source.iter_assets():
-        result.listed += 1
-        seen.add(asset.asset_id)
-        month = month_key(asset.taken_at, tz)
+    # 每次开关连接都要刷盘，逐张开关在 NAS 的机械盘上很慢，所以一批照片共用一个连接和事务。
+    # 先取出一批再打开连接，列举照片的网络请求不占着写锁
+    assets = iter(source.iter_assets())
+    while True:
+        batch, list_error = _take(assets, BATCH_SIZE)
         with db.connect() as conn:
-            if _upsert_asset(conn, account_id, asset, month, now):
-                result.new_assets += 1
-        try:
-            files, size = backup_asset(db, account_id, account_dir, source, asset, month)
-        except (SourceError, OSError, sqlite3.Error) as e:
-            result.add_error(f"{asset.filename}：{e}")
-            continue
-        result.downloaded += files
-        result.downloaded_bytes += size
-        if result.listed % 50 == 0:
-            of_total = f" / {total}" if total else ""
-            # 检查是进度条的主体；只有 NAS 上缺少或有变化的文件才下载，单独说明
-            progress(
-                f"已检查 {result.listed}{of_total} 张", result.listed, total, note=f"新下载 {result.downloaded} 个文件，其余已在 NAS 上"
-            )
+            for asset in batch:
+                result.listed += 1
+                seen.add(asset.asset_id)
+                month = month_key(asset.taken_at, tz)
+                if _upsert_asset(conn, account_id, asset, month, now):
+                    result.new_assets += 1
+                try:
+                    files, size = backup_asset(conn, account_id, account_dir, source, asset, month)
+                except (SourceError, OSError, sqlite3.Error) as e:
+                    result.add_error(f"{asset.filename}：{e}")
+                    continue
+                result.downloaded += files
+                result.downloaded_bytes += size
+                if result.listed % 50 == 0:
+                    of_total = f" / {total}" if total else ""
+                    # 检查是进度条的主体；只有 NAS 上缺少或有变化的文件才下载，单独说明
+                    note = f"新下载 {result.downloaded} 个文件，其余已在 NAS 上"
+                    progress(f"已检查 {result.listed}{of_total} 张", result.listed, total, note=note)
+        if list_error is not None:
+            raise list_error
+        if len(batch) < BATCH_SIZE:
+            break
 
     # 只有完整列完照片库之后，才能判断哪些照片已经不在 iCloud 里
     seen.update(getattr(source, "unreadable", ()))
