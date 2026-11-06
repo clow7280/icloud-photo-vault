@@ -13,11 +13,13 @@ services:
       VAULT_BASE_PATH: /app/icloud-photo-vault
       VAULT_REQUIRE_ADMIN: "1"
       VAULT_BACKUP_ROOT: /data/backup
-      VAULT_ARCHIVE_ROOT: /data/archive
+      VAULT_ARCHIVE_ROOT: /data/vault/归档包
+      VAULT_STAGING_DIR: /data/vault/.staging
       VAULT_STATE_DIR: /data/private/state
-      VAULT_STAGING_DIR: /data/private/staging
     volumes:
       - "${TRIM_APPDEST}:/app/target:rw"
       - "/vol2/1000/Photos/iCloud:/data/backup:rw"
-      - "/vol3/1000/4-Archives/icloud-photo-vault:/data/archive:rw"
-      - "/vol3/1000/4-Archives/.icloud-photo-vault:/data/private:rw"
+      # 归档包和暂存目录在同一个挂载点下，打包好的分卷改名就能移过去，不用再复制一遍
+      - "/vol3/1000/iCloud照片归档:/data/vault:rw"
+      # 数据库、会话和归档密码在固态盘上
+      - "/vol1/1000/.icloud-photo-vault:/data/private:rw"

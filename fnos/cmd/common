@@ -10,8 +10,21 @@ RUN_GID=1001
 
 # 与 app/docker/docker-compose.yaml 中挂载的宿主机目录保持一致
 BACKUP_DIR="/vol2/1000/Photos/iCloud"
-ARCHIVE_DIR="/vol3/1000/4-Archives/icloud-photo-vault"
-PRIVATE_DIR="/vol3/1000/4-Archives/.icloud-photo-vault"
+# 归档包和暂存目录在 vol3 上同一个目录里，容器只挂这一个目录，打包好的分卷改名就能移进归档包目录。
+# 百度网盘只同步“归档包”这个子目录
+VAULT_ROOT="/vol3/1000/iCloud照片归档"
+ARCHIVE_DIR="$VAULT_ROOT/归档包"
+STAGING_DIR="$VAULT_ROOT/.staging"
+# 数据库、会话和归档密码放在固态盘的 vol1 上
+STATE_PARENT="/vol1/1000/.icloud-photo-vault"
+STATE_DIR="$STATE_PARENT/state"
+
+# 0.1.6 及以前的位置，升级时挪到上面的新位置
+OLD_ARCHIVE_DIR="/vol3/1000/4-Archives/icloud-photo-vault"
+OLD_PRIVATE_DIR="/vol3/1000/4-Archives/.icloud-photo-vault"
+OLD_STATE_DIR="$OLD_PRIVATE_DIR/state"
+# 旧的状态目录迁到 vol1 后改名保留在这里，确认新版本正常后可以手动删除
+OLD_STATE_BACKUP="$VAULT_ROOT/.state-before-vol1"
 
 fail() {
     echo "$1" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
@@ -28,13 +41,60 @@ ensure_dir() {
     fi
 }
 
+# 挪动数据之前停掉还在运行的容器，免得它同时在写
+stop_container() {
+    if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = "true" ]; then
+        docker stop "$CONTAINER" > /dev/null || fail "挪动数据前无法停止容器 $CONTAINER"
+    fi
+}
+
 # 容器挂载这些目录，必须在应用中心启动容器之前准备好，否则 Docker 会以 root 身份自动创建
 prepare_dirs() {
     [ -d "/vol2/1000/Photos" ] || fail "找不到 /vol2/1000/Photos，请确认照片目录存在"
-    [ -d "/vol3/1000/4-Archives" ] || fail "找不到 /vol3/1000/4-Archives，请确认归档目录存在"
+    [ -d "/vol3/1000" ] || fail "找不到 /vol3/1000，请确认 vol3 存储空间存在"
+    [ -d "/vol1/1000" ] || fail "找不到 /vol1/1000，请确认 vol1 存储空间存在"
     ensure_dir "$BACKUP_DIR" 755
+    ensure_dir "$VAULT_ROOT" 755
+    ensure_dir "$STATE_PARENT" 700
+    migrate_archive
+    migrate_state
+    remove_old_private_dir
     ensure_dir "$ARCHIVE_DIR" 755
-    ensure_dir "$PRIVATE_DIR" 700
+    ensure_dir "$STAGING_DIR" 700
+}
+
+# 旧的归档包目录在同一个子卷里，直接改名挪过来，不复制数据
+migrate_archive() {
+    [ -d "$OLD_ARCHIVE_DIR" ] || return 0
+    [ -e "$ARCHIVE_DIR" ] && fail "$OLD_ARCHIVE_DIR 和 $ARCHIVE_DIR 都存在，请先处理其中一个，再重新安装"
+    stop_container
+    mv "$OLD_ARCHIVE_DIR" "$ARCHIVE_DIR" || fail "无法把 $OLD_ARCHIVE_DIR 挪到 $ARCHIVE_DIR"
+}
+
+# 把旧的状态目录复制到 vol1，逐个文件核对一致后才启用，旧目录改名保留。
+# 新位置已经有数据库时什么也不做。迁移中途失败时安装失败，旧目录原样保留，不会用空数据库启动
+migrate_state() {
+    [ -d "$OLD_STATE_DIR" ] || return 0
+    [ -e "$STATE_DIR/vault.db" ] && return 0
+    if [ -e "$STATE_DIR" ]; then
+        rmdir "$STATE_DIR" 2> /dev/null || fail "$STATE_DIR 里有文件但没有数据库，请先处理这个目录，再重新安装"
+    fi
+    [ -e "$OLD_STATE_BACKUP" ] && fail "$OLD_STATE_BACKUP 已经存在，请先处理这个目录，再重新安装"
+    stop_container
+    local tmp="$STATE_DIR.migrating"
+    rm -rf "$tmp"
+    cp -a "$OLD_STATE_DIR" "$tmp" || fail "复制 $OLD_STATE_DIR 到 $tmp 失败"
+    diff -r "$OLD_STATE_DIR" "$tmp" > /dev/null || fail "复制到 $tmp 的内容与 $OLD_STATE_DIR 不一致"
+    mv "$tmp" "$STATE_DIR" || fail "无法启用 $STATE_DIR"
+    mv "$OLD_STATE_DIR" "$OLD_STATE_BACKUP" || fail "无法把 $OLD_STATE_DIR 挪到 $OLD_STATE_BACKUP"
+}
+
+# 状态目录挪走后，旧的隐藏目录里只剩打包用的临时文件，删掉后移除这个目录
+remove_old_private_dir() {
+    [ -d "$OLD_PRIVATE_DIR" ] || return 0
+    [ -e "$OLD_STATE_DIR" ] && return 0
+    rm -rf "$OLD_PRIVATE_DIR/staging"
+    rmdir "$OLD_PRIVATE_DIR" 2> /dev/null || true
 }
 
 # 安装和升级时，应用中心在 *_callback 之前就会启动容器，所以 *_init 阶段就要导入镜像。
