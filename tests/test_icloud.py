@@ -167,31 +167,90 @@ class Response:
 
 
 class DownloadSession:
-    def __init__(self, result):
-        self.result = result
+    """依次返回 results 中的结果；records/lookup 返回 lookup。"""
+
+    def __init__(self, *results, lookup=None):
+        self.results = list(results)
+        self.lookup = lookup
         self.headers = None
+        self.urls = []
+        self.posts = []
 
     def get(self, url, stream, headers=None):
         self.headers = headers
-        if isinstance(self.result, Exception):
-            raise self.result
-        return self.result
+        self.urls.append(url)
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    def post(self, url, data, headers):
+        self.posts.append((url, json.loads(data)))
+        return FakeResponse(self.lookup)
 
 
-def download(result, start=0):
+def remote_photo():
     from icloud_photo_vault.source import RemoteAsset, RemoteVersion
 
+    return RemoteAsset(
+        "MASTER1", "ASSET1", None, "IMG_0001.HEIC", "image", None, {"original": RemoteVersion("u", 10, "c-orig", "HEIC")}
+    )
+
+
+def download_source(session):
     source = ICloudSource.__new__(ICloudSource)
-    source.library = type("Lib", (), {"session": DownloadSession(result)})()
-    asset = RemoteAsset("a", "r", None, "IMG.HEIC", "image", None, {"original": RemoteVersion("u", 10, "c", "HEIC")})
-    return b"".join(source.download(asset, "original", start)), source.library.session.headers
+    source.library = FakeLibrary(session)
+    return source
+
+
+def download(*results, start=0, lookup=None):
+    source = download_source(DownloadSession(*results, lookup=lookup))
+    return b"".join(source.download(remote_photo(), "original", start)), source.library.session.headers
+
+
+def lookup_of(photo):
+    return {"records": [photo._master_record, photo._asset_record]}
+
+
+def gone():
+    from pyicloud_ipd.exceptions import PyiCloudAPIResponseException
+
+    return PyiCloudAPIResponseException("Gone", "410")
+
+
+def test_expired_url_is_refreshed_and_download_resumes():
+    session = DownloadSession(gone(), Response(206, b"6789"), lookup=lookup_of(make_photo()))
+    source = download_source(session)
+    asset = remote_photo()
+
+    assert b"".join(source.download(asset, "original", 6)) == b"6789"
+
+    assert session.urls == ["u", "https://example/orig"]
+    assert session.headers == {"Range": "bytes=6-"}
+    url, body = session.posts[0]
+    assert url.startswith(FakeLibrary.service_endpoint + "/records/lookup?")
+    assert body == {"records": [{"recordName": "MASTER1"}, {"recordName": "ASSET1"}], "zoneID": FakeLibrary.zone_id}
+    # 之后再续传时直接用新链接
+    assert asset.versions["original"].url == "https://example/orig"
+
+
+def test_changed_photo_is_not_mixed_into_partial_download():
+    changed = make_photo(extra_master={"resOriginalRes": res(1000, "https://example/new", "c-new")})
+    with pytest.raises(SourceError, match="已有变化") as info:
+        download(gone(), start=6, lookup=lookup_of(changed))
+    assert not info.value.retryable
+
+
+def test_refresh_failure_is_explained():
+    with pytest.raises(SourceError, match="重新获取失败"):
+        download(gone(), lookup={"records": [{"recordName": "MASTER1", "serverErrorCode": "NOT_FOUND"}]})
 
 
 def test_download_resumes_with_range():
-    assert download(Response(206, b"6789"), 6) == (b"6789", {"Range": "bytes=6-"})
+    assert download(Response(206, b"6789"), start=6) == (b"6789", {"Range": "bytes=6-"})
     # 服务器忽略 Range、返回整个文件时，跳过已有的部分
-    assert download(Response(200, b"0123456789"), 6)[0] == b"6789"
-    assert download(Response(200, b"0123"), 0) == (b"0123", None)
+    assert download(Response(200, b"0123456789"), start=6)[0] == b"6789"
+    assert download(Response(200, b"0123")) == (b"0123", None)
 
 
 @pytest.mark.parametrize(
@@ -205,19 +264,17 @@ def test_download_resumes_with_range():
     ],
 )
 def test_download_errors_are_explained(error, message, retryable):
-    from pyicloud_ipd.exceptions import (
-        PyiCloudAPIResponseException,
-        PyiCloudConnectionErrorException,
-    )
+    from pyicloud_ipd.exceptions import PyiCloudConnectionErrorException
     from requests import ReadTimeout
 
-    result = {
-        "connection": PyiCloudConnectionErrorException("Cannot connect to Apple iCloud service"),
-        "timeout": ReadTimeout("Read timed out."),
-        "gone": PyiCloudAPIResponseException("Gone", "410"),
-        "busy": Response(503, b""),
-        "forbidden": Response(403, b""),
+    results = {
+        "connection": [PyiCloudConnectionErrorException("Cannot connect to Apple iCloud service")],
+        # 换了新链接仍然过期
+        "gone": [gone(), gone()],
+        "timeout": [ReadTimeout("Read timed out.")],
+        "busy": [Response(503, b"")],
+        "forbidden": [Response(403, b"")],
     }[error]
     with pytest.raises(SourceError) as info:
-        download(result)
+        download(*results, lookup=lookup_of(make_photo()))
     assert (str(info.value), info.value.retryable) == (message, retryable)

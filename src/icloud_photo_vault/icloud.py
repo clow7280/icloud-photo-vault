@@ -133,13 +133,44 @@ class ICloudSource:
             raise SourceError(f"查询照片数量失败：{e}") from e
         return LibraryCount(total, videos)
 
-    def download(self, asset: RemoteAsset, role: str, start: int = 0) -> Iterator[bytes]:
-        version = asset.versions[role]
-        headers = {"Range": f"bytes={start}-"} if start else None
+    def _refresh_url(self, asset: RemoteAsset, role: str) -> None:
+        """重新查询这张照片，换上新的下载链接。"""
+        body = {
+            "records": [{"recordName": asset.asset_id}, {"recordName": asset.record_name}],
+            "zoneID": self.library.zone_id,
+        }
+        url = f"{self.library.service_endpoint}/records/lookup?{urllib.parse.urlencode(self.library.params)}"
         try:
-            response = self.library.session.get(version.url, stream=True, headers=headers)
-        except (PyiCloudException, RequestException) as e:
-            raise download_error(e) from e
+            response = self.library.session.post(
+                url, data=json.dumps(body), headers={"Content-type": "application/json"}
+            )
+            records = {r.get("recordName"): r for r in response.json().get("records") or []}
+            master, record = records[asset.asset_id], records[asset.record_name]
+            if "fields" not in master or "fields" not in record:
+                raise KeyError(master.get("serverErrorCode") or record.get("serverErrorCode"))
+            fresh = to_remote_asset(PhotoAsset(master, record)).versions.get(role)
+        except (PyiCloudException, RequestException, SourceError, KeyError, ValueError) as e:
+            raise SourceError(f"下载链接已过期，重新获取失败：{e}") from e
+        old = asset.versions[role]
+        if fresh is None or fresh.checksum != old.checksum:
+            raise SourceError("照片在 iCloud 中已有变化，下次同步再下载")
+        asset.versions[role] = fresh
+
+    def download(self, asset: RemoteAsset, role: str, start: int = 0) -> Iterator[bytes]:
+        headers = {"Range": f"bytes={start}-"} if start else None
+        # 下载链接是列照片时按页拿到的，约 15 分钟后失效（HTTP 410）。
+        # 一页 100 张里大视频多时，排在后面的会等到链接过期，这时重新查询一次再下载
+        for refreshed in (False, True):
+            try:
+                response = self.library.session.get(asset.versions[role].url, stream=True, headers=headers)
+                break
+            except PyiCloudAPIResponseException as e:
+                if e.code != "410" or refreshed:
+                    raise download_error(e) from e
+                log.info("%s 的下载链接已过期，重新获取", asset.filename)
+                self._refresh_url(asset, role)
+            except (PyiCloudException, RequestException) as e:
+                raise download_error(e) from e
         if not response.ok:
             status = response.status_code
             raise SourceError(f"iCloud 返回 HTTP {status}", retryable=status in RETRY_STATUS)
