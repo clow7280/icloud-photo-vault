@@ -6,9 +6,10 @@
     {%- if task %}
     <span class="spinner"></span>
     <strong>{{ task.name }}</strong>
-    {%- if task.account %}<span class="sb-sep">›</span><span>{{ task.account.name }}{% if task.account.total > 1 %}（第 {{ task.account.index }}/{{ task.account.total }} 个账号）{% endif %}</span>{% endif %}
+    {%- if task.context %}<span class="sb-sep">›</span><span>{{ task.context }}</span>{% endif %}
     {%- if task.step %}<span class="sb-sep">›</span><span class="sb-step" title="{{ task.step }}">{{ task.step }}</span>{% endif %}
     {%- if task.percent is not none %}<span class="sb-meter" title="{{ task.done }} / {{ task.total }}"><span style="width: {{ task.percent }}%"></span></span><span class="sb-pct">{{ task.percent }}%</span>{% endif %}
+    {%- if task.note %}<span class="sb-sep">·</span><span class="muted sb-note" title="{{ task.note }}">{{ task.note }}</span>{% endif %}
     {%- if status.more %}<span class="sb-sep">·</span><a class="sb-more" href="{{ base }}/log?view=tasks">{{ status.more }}</a>{% endif %}
     {%- elif status.last and not status.last.ok %}
     <span class="dot bad"></span><a href="{{ base }}/log?view=tasks" class="bad" title="{{ status.last.summary }}">{{ status.last.name }}失败</a><span class="muted">{{ status.last.finished_at }}</span>
@@ -26,6 +27,6 @@
     <a href="{{ base }}/accounts/new">还没有账号</a>
     {%- endif %}
   </div>
-  <div class="sb-item sb-next" title="{{ '上次完整运行 ' ~ status.last_cycle if status.last_cycle }}">下次自动运行 {{ status.next_cycle or "即将开始" }}</div>
+  <div class="sb-item sb-next" title="{{ '上次完整运行 ' ~ status.last_cycle if status.last_cycle }}">下次自动运行 {{ status.next_text }}</div>
   {%- if fake %}<div class="sb-item sb-fake"><span class="badge warn">模拟数据</span></div>{% endif %}
 </footer>

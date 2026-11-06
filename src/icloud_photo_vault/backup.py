@@ -303,7 +303,7 @@ def sync_account(
                 (count.total, count.videos, now, account_id),
             )
         total = count.total
-        progress(f"iCloud 共 {count.total} 张，其中视频 {count.videos} 个，开始检查", 0, total)
+        progress(f"已检查 0 / {total} 张", 0, total, note=f"iCloud 共 {count.total} 张，其中视频 {count.videos} 个")
     for asset in source.iter_assets():
         result.listed += 1
         seen.add(asset.asset_id)
@@ -320,7 +320,10 @@ def sync_account(
         result.downloaded_bytes += size
         if result.listed % 50 == 0:
             of_total = f" / {total}" if total else ""
-            progress(f"已检查 {result.listed}{of_total} 张，下载 {result.downloaded} 个文件", result.listed, total)
+            # 检查是进度条的主体；只有 NAS 上缺少或有变化的文件才下载，单独说明
+            progress(
+                f"已检查 {result.listed}{of_total} 张", result.listed, total, note=f"新下载 {result.downloaded} 个文件，其余已在 NAS 上"
+            )
 
     # 只有完整列完照片库之后，才能判断哪些照片已经不在 iCloud 里
     seen.update(getattr(source, "unreadable", ()))

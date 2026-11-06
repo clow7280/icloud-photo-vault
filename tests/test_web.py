@@ -88,8 +88,12 @@ def test_statusbar_shows_task_once(client):
         assert bar.count("alice") == 1
         assert "已检查 50 / 200 张" in bar and "25%" in bar
         running.name = "完整运行"
+        running.phase = "同步"
+        running("已检查 50 / 200 张", 50, 200, note="新下载 3 个文件，其余已在 NAS 上")
         bar = client.get("/statusbar").text
-        assert "alice（第 1/2 个账号）" in bar
+        assert "同步 alice（第 1/2 个账号）" in bar
+        # 检查进度和新下载的数量分开显示
+        assert re.search(r"已检查 50 / 200 张</span>.*25%</span>.*新下载 3 个文件", bar, re.S)
     finally:
         release.set()
         jobs.wait(10)
@@ -403,3 +407,15 @@ def test_cleanup_page_does_not_offer_undated_photos(client):
     assert "没有拍摄日期，不能删除" in page
     dated = sum(r["backed_up"] for r in rows if r["month"] != "unknown")
     assert f"{dated} 张已备份到 NAS" in page
+
+
+def test_next_run_waits_for_current_cycle(client):
+    jobs = client.app_state.jobs
+    release = threading.Event()
+    jobs.submit("完整运行", lambda p: release.wait(10) and "", key="cycle")
+    try:
+        assert "下次自动运行 本轮结束 24 小时后" in client.get("/statusbar").text
+    finally:
+        release.set()
+        assert jobs.wait(10)
+    assert "下次自动运行 即将开始" in client.get("/statusbar").text

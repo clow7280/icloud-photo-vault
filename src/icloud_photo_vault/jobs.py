@@ -51,15 +51,22 @@ class Task:
     meter: tuple[int, int] | None = None
     # 正在同步第几个账号，给状态栏显示
     syncing: dict | None = None
+    # 完整运行当前在哪一步：同步、归档或自动清理
+    phase: str = ""
+    # 进度条后面的补充说明
+    note: str = ""
     finished: threading.Event = field(default_factory=threading.Event, repr=False)
 
     @property
     def ok(self) -> bool:
         return self.state != "failed"
 
-    def __call__(self, message: str, done: int | None = None, total: int | None = None) -> None:
+    def __call__(
+        self, message: str, done: int | None = None, total: int | None = None, note: str | None = None
+    ) -> None:
         self.step = message
         self.meter = (done, total) if done is not None and total else None
+        self.note = note or ""
 
     def conflicts(self, other: "Task") -> bool:
         if self.heavy and other.heavy:
@@ -147,7 +154,7 @@ class Jobs:
             task.summary = f"失败：{e}"
             task.state = "failed"
         task.finished_at = utcnow()
-        task.step, task.meter, task.syncing = "", None, None
+        task.step, task.meter, task.syncing, task.phase, task.note = "", None, None, "", ""
         if self.on_finish is not None:
             try:
                 self.on_finish()
@@ -261,7 +268,7 @@ class Jobs:
             if source is None:
                 lines.append(f"{account['name']}：需要重新登录，已跳过")
                 continue
-            task("正在查询 iCloud 照片数量")
+            task("查询 iCloud 照片数量")
             try:
                 r = sync_account(self.db, self.cfg.backup_root, self.cfg.timezone, account, source, task)
             except Exception as e:
@@ -285,7 +292,7 @@ class Jobs:
         return lines, sources
 
     def archive(self, progress: Task) -> list[str]:
-        progress("正在归档")
+        progress("准备归档")
         r = run_archive(self.db, self.cfg, datetime.now(UTC), progress)
         lines = [f"归档：新打包 {r.built} 个月，{r.unchanged} 个月无变化"]
         lines += [f"归档错误：{e}" for e in r.errors[:5]]
@@ -307,7 +314,7 @@ class Jobs:
             )
             if not plan:
                 continue
-            progress(f"正在自动清理 {account['name']} 的 {len(plan)} 张", 0, len(plan))
+            progress(f"从 {account['name']} 的 iCloud 删除 {len(plan)} 张", 0, len(plan))
             r = execute_deletion(
                 self.db, self.cfg.backup_root, self.cfg.archive_root, source, account["id"],
                 [c.asset_id for c in plan], "auto", progress,
@@ -316,8 +323,11 @@ class Jobs:
         return lines
 
     def cycle(self, progress: Task) -> str:
+        progress.phase = "同步"
         lines, sources = self.sync(progress)
+        progress.phase = "归档"
         lines += self.archive(progress)
+        progress.phase = "自动清理"
         lines += self.auto_delete(progress, sources)
         self.db.set_setting("last_cycle_at", utcnow())
         return "\n".join(lines)

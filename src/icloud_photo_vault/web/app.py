@@ -147,11 +147,16 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
 
     def describe(task: Task) -> dict:
         syncing, meter = task.syncing, task.meter
+        # 任务现在在做什么：完整运行的哪一步、哪个账号。任务名里已经有账号名时（例如“同步 小红”）不再重复
+        context = [task.phase] if task.phase else []
+        if syncing and syncing["name"] not in task.name:
+            of = f"（第 {syncing['index']}/{syncing['total']} 个账号）" if syncing["total"] > 1 else ""
+            context.append(syncing["name"] + of)
         return {
             "name": task.name,
-            # 任务名里已经有账号名时（例如“同步 小红”）不再重复显示
-            "account": syncing if syncing and syncing["name"] not in task.name else None,
+            "context": " ".join(context),
             "step": task.step,
+            "note": task.note,
             "done": meter[0] if meter else None,
             "total": meter[1] if meter else None,
             "percent": min(100, int(100 * meter[0] / meter[1])) if meter else None,
@@ -176,10 +181,16 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
             accounts = conn.execute("SELECT id, name, auth_state FROM accounts ORDER BY id").fetchall()
         need_login = [{"id": a["id"], "name": a["name"]} for a in accounts if a["auth_state"] != "ok"]
         last_cycle = db.get_setting("last_cycle_at")
+        hours = db.get_int("sync_interval_hours")
         next_cycle = None
         if last_cycle:
-            due = datetime.fromisoformat(last_cycle) + timedelta(hours=db.get_int("sync_interval_hours"))
+            due = datetime.fromisoformat(last_cycle) + timedelta(hours=hours)
             next_cycle = local_time(due.isoformat()) if due > datetime.now(UTC) else None
+        # 完整运行正在运行或排队时，下一轮从这一轮结束时算起
+        if any(t.key == "cycle" for t in running + queued):
+            next_text = f"本轮结束 {hours} 小时后"
+        else:
+            next_text = next_cycle or "即将开始"
         return {
             "running": bool(running or queued),
             "task": describe(main) if main else None,
@@ -192,6 +203,7 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
             "accounts": {"total": len(accounts), "logged_in": len(accounts) - len(need_login), "need_login": need_login},
             "last_cycle": local_time(last_cycle),
             "next_cycle": next_cycle,
+            "next_text": next_text,
         }
 
     def submitted(sub: Submission, started: str) -> str:

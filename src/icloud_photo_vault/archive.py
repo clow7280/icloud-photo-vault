@@ -275,7 +275,7 @@ def run_archive(
         with db.connect() as conn:
             months = archivable_months(conn, account["id"], current_month)
         for index, month in enumerate(months, 1):
-            progress(f"正在归档 {account['name']} {month}", index - 1, len(months))
+            progress(f"打包 {account['name']} {month}", index - 1, len(months), note=f"第 {index} / {len(months)} 个月")
             try:
                 if build_month_archive(db, cfg, sz, account, month, password, volume_mb):
                     result.built += 1

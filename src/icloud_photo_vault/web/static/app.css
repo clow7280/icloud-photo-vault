@@ -133,7 +133,9 @@ h3 { font-size: 13px; margin: 0; }
 .sb-refresh { margin-left: 6px; color: var(--primary) !important; }
 .sb-task { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; color: var(--text); }
 .sb-task > * { flex-shrink: 0; }
-.sb-task .sb-step { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* 窄的时候先截断补充说明，再截断步骤 */
+.sb-task .sb-step { flex-shrink: 1; min-width: 4em; overflow: hidden; text-overflow: ellipsis; }
+.sb-task .sb-note { flex-shrink: 100; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .sb-sep { color: var(--muted); }
 .sb-meter { width: 96px; height: 6px; margin-left: 4px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .sb-meter > span { display: block; height: 100%; border-radius: 3px; background: var(--primary); }
