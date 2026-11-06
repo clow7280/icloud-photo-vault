@@ -4,6 +4,7 @@ import hashlib
 import logging
 import os
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,6 +18,8 @@ log = logging.getLogger(__name__)
 
 UNKNOWN_MONTH = "unknown"
 MAX_ERRORS_KEPT = 50
+# 下载中断后等待几秒再接着下载，用完这些次数仍失败才算这张照片失败
+RETRY_DELAYS = (5, 30)
 
 
 @dataclass
@@ -126,10 +129,18 @@ def fetch_version(
     size = 0
     try:
         with open(part, "wb") as f:
-            for chunk in source.download(asset, role):
-                f.write(chunk)
-                digest.update(chunk)
-                size += len(chunk)
+            for delay in (*RETRY_DELAYS, None):
+                try:
+                    for chunk in source.download(asset, role, size):
+                        f.write(chunk)
+                        digest.update(chunk)
+                        size += len(chunk)
+                    break
+                except SourceError as e:
+                    if not e.retryable or delay is None:
+                        raise
+                    log.info("%s 下载中断（%s），%d 秒后从第 %d 字节接着下载", dest.name, e, delay, size)
+                    time.sleep(delay)
             f.flush()
             os.fsync(f.fileno())
         if size != version.size:

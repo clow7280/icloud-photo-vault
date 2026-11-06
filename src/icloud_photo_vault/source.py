@@ -14,7 +14,11 @@ REMOTE_ROLES = ("original", "alternative", "adjusted", "live")
 
 
 class SourceError(Exception):
-    pass
+    """访问 iCloud 出错。retryable 表示稍后重试可能成功，例如网络中断。"""
+
+    def __init__(self, message: str, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
 
 
 class LoginRequired(SourceError):
@@ -54,7 +58,9 @@ class PhotoSource(Protocol):
 
     def iter_assets(self) -> Iterator[RemoteAsset]: ...
 
-    def download(self, asset: RemoteAsset, role: str) -> Iterator[bytes]: ...
+    def download(self, asset: RemoteAsset, role: str, start: int = 0) -> Iterator[bytes]:
+        """从第 start 个字节开始返回文件内容，用于下载中断后接着下载。"""
+        ...
 
     def delete(self, record_name: str, change_tag: str | None) -> None: ...
 
@@ -93,6 +99,8 @@ class FakeLibrary:
     deleted: set[str] = field(default_factory=set)
     logged_in: bool = False
     fail_delete: set[str] = field(default_factory=set)
+    # 测试用：这些文件的下载会在中途断开，值是还要断开的次数
+    flaky: dict[tuple[str, str], int] = field(default_factory=dict)
 
     @classmethod
     def generate(
@@ -164,10 +172,15 @@ class FakeLibrary:
             if asset.record_name not in self.deleted:
                 yield asset
 
-    def download(self, asset: RemoteAsset, role: str) -> Iterator[bytes]:
-        data = self.contents[(asset.asset_id, role)]
-        for start in range(0, len(data), 4096):
-            yield data[start : start + 4096]
+    def download(self, asset: RemoteAsset, role: str, start: int = 0) -> Iterator[bytes]:
+        key = (asset.asset_id, role)
+        data = self.contents[key][start:]
+        if self.flaky.get(key):
+            self.flaky[key] -= 1
+            yield data[: len(data) // 2]
+            raise SourceError("模拟网络中断", retryable=True)
+        for offset in range(0, len(data), 4096):
+            yield data[offset : offset + 4096]
 
     def delete(self, record_name: str, change_tag: str | None) -> None:
         if record_name in self.fail_delete:

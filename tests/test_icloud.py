@@ -153,3 +153,71 @@ def test_count_failure_is_source_error():
     source.library = type("Lib", (), {"all": Sized(10), "albums": {}})()
     with pytest.raises(SourceError, match="查询照片数量失败"):
         source.count()
+
+
+class Response:
+    def __init__(self, status, body):
+        self.status_code = status
+        self.ok = status < 400
+        self.body = body
+
+    def iter_content(self, chunk_size):
+        for i in range(0, len(self.body), 3):
+            yield self.body[i : i + 3]
+
+
+class DownloadSession:
+    def __init__(self, result):
+        self.result = result
+        self.headers = None
+
+    def get(self, url, stream, headers=None):
+        self.headers = headers
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
+def download(result, start=0):
+    from icloud_photo_vault.source import RemoteAsset, RemoteVersion
+
+    source = ICloudSource.__new__(ICloudSource)
+    source.library = type("Lib", (), {"session": DownloadSession(result)})()
+    asset = RemoteAsset("a", "r", None, "IMG.HEIC", "image", None, {"original": RemoteVersion("u", 10, "c", "HEIC")})
+    return b"".join(source.download(asset, "original", start)), source.library.session.headers
+
+
+def test_download_resumes_with_range():
+    assert download(Response(206, b"6789"), 6) == (b"6789", {"Range": "bytes=6-"})
+    # 服务器忽略 Range、返回整个文件时，跳过已有的部分
+    assert download(Response(200, b"0123456789"), 6)[0] == b"6789"
+    assert download(Response(200, b"0123"), 0) == (b"0123", None)
+
+
+@pytest.mark.parametrize(
+    ("error", "message", "retryable"),
+    [
+        ("connection", "连接 iCloud 失败", True),
+        ("timeout", "下载超时", True),
+        ("gone", "下载链接已过期", False),
+        ("busy", "iCloud 返回 HTTP 503", True),
+        ("forbidden", "iCloud 返回 HTTP 403", False),
+    ],
+)
+def test_download_errors_are_explained(error, message, retryable):
+    from pyicloud_ipd.exceptions import (
+        PyiCloudAPIResponseException,
+        PyiCloudConnectionErrorException,
+    )
+    from requests import ReadTimeout
+
+    result = {
+        "connection": PyiCloudConnectionErrorException("Cannot connect to Apple iCloud service"),
+        "timeout": ReadTimeout("Read timed out."),
+        "gone": PyiCloudAPIResponseException("Gone", "410"),
+        "busy": Response(503, b""),
+        "forbidden": Response(403, b""),
+    }[error]
+    with pytest.raises(SourceError) as info:
+        download(result)
+    assert (str(info.value), info.value.retryable) == (message, retryable)

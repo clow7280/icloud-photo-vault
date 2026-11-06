@@ -142,3 +142,18 @@ def test_sync_continues_when_count_fails(db, cfg, account, library, monkeypatch)
     make_asset(library, "a1", "IMG_0001.HEIC", datetime(2023, 5, 1, tzinfo=UTC))
     monkeypatch.setattr(library, "count", fail)
     assert sync(db, cfg, account, library).listed == 1
+
+
+def test_interrupted_download_resumes(db, cfg, account, library, monkeypatch):
+    monkeypatch.setattr("icloud_photo_vault.backup.RETRY_DELAYS", (0, 0))
+    make_asset(library, "a1", "IMG_0001.HEIC", datetime(2023, 5, 12, tzinfo=UTC))
+    library.flaky[("a1", "original")] = 2
+
+    result = sync(db, cfg, account, library)
+
+    assert (result.errors, result.downloaded) == ([], 1)
+    saved = files_of(db, "a1")["original"]
+    data = library.contents[("a1", "original")]
+    assert saved["sha256"] == hashlib.sha256(data).hexdigest()
+    assert (cfg.backup_root / "alice" / saved["rel_path"]).read_bytes() == data
+

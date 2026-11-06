@@ -12,17 +12,42 @@ from xml.etree import ElementTree
 from icloudpd.xmp_sidecar import build_metadata, generate_xml
 from pyicloud_ipd.asset_version import ITEM_TYPE_EXTENSIONS
 from pyicloud_ipd.base import PyiCloudService
-from pyicloud_ipd.exceptions import PyiCloudException
+from pyicloud_ipd.exceptions import (
+    PyiCloudAPIResponseException,
+    PyiCloudConnectionErrorException,
+    PyiCloudException,
+    PyiCloudServiceUnavailableException,
+)
 from pyicloud_ipd.item_type import AssetItemType
 from pyicloud_ipd.services.photos import PhotoAsset, PhotoLibrary
 from pyicloud_ipd.version_size import AssetVersionSize, LivePhotoVersionSize
-from requests import RequestException
+from requests import RequestException, Timeout
 
 from .source import LibraryCount, LoginRequired, PhotoSource, RemoteAsset, RemoteVersion, SourceError
 
 log = logging.getLogger(__name__)
 
 CHUNK_SIZE = 1 << 20
+# 这些 HTTP 状态表示服务器暂时忙，稍后重试可能成功
+RETRY_STATUS = {429, 500, 502, 503, 504}
+
+
+def download_error(e: Exception) -> SourceError:
+    """把下载时的异常转成说明清楚、标明能否重试的 SourceError。"""
+    if isinstance(e, PyiCloudConnectionErrorException):
+        return SourceError("连接 iCloud 失败", retryable=True)
+    if isinstance(e, PyiCloudServiceUnavailableException):
+        return SourceError("iCloud 暂时不可用", retryable=True)
+    if isinstance(e, Timeout):
+        return SourceError("下载超时", retryable=True)
+    if isinstance(e, RequestException):
+        return SourceError(f"网络中断：{type(e).__name__}", retryable=True)
+    if isinstance(e, PyiCloudAPIResponseException) and e.code == "410":
+        # 下载链接是列出照片时拿到的，有时效；重试同一个链接没有用，下次同步会拿到新链接
+        return SourceError("下载链接已过期")
+    if isinstance(e, PyiCloudAPIResponseException) and e.code and e.code.isdigit():
+        return SourceError(f"iCloud 返回 HTTP {e.code}", retryable=int(e.code) in RETRY_STATUS)
+    return SourceError(f"iCloud 返回错误：{e}")
 
 
 def _ext(file_type: str, fallback_name: str) -> str:
@@ -108,15 +133,28 @@ class ICloudSource:
             raise SourceError(f"查询照片数量失败：{e}") from e
         return LibraryCount(total, videos)
 
-    def download(self, asset: RemoteAsset, role: str) -> Iterator[bytes]:
+    def download(self, asset: RemoteAsset, role: str, start: int = 0) -> Iterator[bytes]:
         version = asset.versions[role]
+        headers = {"Range": f"bytes={start}-"} if start else None
         try:
-            response = self.library.session.get(version.url, stream=True)
+            response = self.library.session.get(version.url, stream=True, headers=headers)
         except (PyiCloudException, RequestException) as e:
-            raise SourceError(f"下载 {asset.filename} 失败：{e}") from e
+            raise download_error(e) from e
         if not response.ok:
-            raise SourceError(f"下载 {asset.filename} 失败：HTTP {response.status_code}")
-        yield from response.iter_content(chunk_size=CHUNK_SIZE)
+            status = response.status_code
+            raise SourceError(f"iCloud 返回 HTTP {status}", retryable=status in RETRY_STATUS)
+        # 服务器没有按 Range 只返回后半段时，自己跳过已经下载的部分
+        skip = start if start and response.status_code != 206 else 0
+        try:
+            for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                if skip:
+                    dropped = min(skip, len(chunk))
+                    chunk, skip = chunk[dropped:], skip - dropped
+                    if not chunk:
+                        continue
+                yield chunk
+        except RequestException as e:
+            raise download_error(e) from e
 
     def delete(self, record_name: str, change_tag: str | None) -> None:
         """与 icloudpd 的 Move 模式相同：把记录标记为已删除，照片进入“最近删除”。"""
