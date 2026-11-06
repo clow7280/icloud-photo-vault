@@ -24,6 +24,8 @@ from .source import Backend, LoginRequired, PhotoSource
 log = logging.getLogger(__name__)
 
 HISTORY_SIZE = 20
+# 任务结果里列出的失败照片数量
+ERRORS_IN_SUMMARY = 10
 
 
 @dataclass(eq=False)
@@ -273,9 +275,12 @@ class Jobs:
                 f"{account['name']}：检查 {r.listed} 张，新增 {r.new_assets} 张，"
                 f"下载 {r.downloaded} 个文件，{r.gone} 张已不在 iCloud"
             )
-            if r.errors:
-                line += f"，{len(r.errors)} 个错误"
+            if r.failed:
+                line += f"，{r.failed} 张没有备份成功，下次同步会自动重试"
             lines.append(line)
+            lines += [f"  {e}" for e in r.errors[:ERRORS_IN_SUMMARY]]
+            if r.failed > ERRORS_IN_SUMMARY:
+                lines.append(f"  另外 {r.failed - ERRORS_IN_SUMMARY} 张见服务日志")
         task.syncing = None
         return lines, sources
 

@@ -29,10 +29,13 @@ class SyncResult:
     downloaded: int = 0
     downloaded_bytes: int = 0
     gone: int = 0
+    # 没有备份成功的照片数量；errors 只保留前面一部分说明
+    failed: int = 0
     errors: list[str] = field(default_factory=list)
 
     def add_error(self, message: str) -> None:
         log.warning(message)
+        self.failed += 1
         if len(self.errors) < MAX_ERRORS_KEPT:
             self.errors.append(message)
 
@@ -328,7 +331,10 @@ def sync_account(
         gone = [(account_id, r["asset_id"]) for r in rows if r["asset_id"] not in seen]
         conn.executemany("UPDATE assets SET state = 'gone' WHERE account_id = ? AND asset_id = ?", gone)
         result.gone = len(gone)
-        error = "；".join(result.errors[:3]) if result.errors else None
+        error = None
+        if result.failed:
+            more = "等" if result.failed > 3 else ""
+            error = f"{result.failed} 张照片没有备份成功，下次同步会自动重试：{'；'.join(result.errors[:3])}{more}"
         conn.execute(
             "UPDATE accounts SET last_sync_at = ?, last_sync_error = ?, auth_state = 'ok' WHERE id = ?",
             (utcnow(), error, account_id),

@@ -157,3 +157,21 @@ def test_interrupted_download_resumes(db, cfg, account, library, monkeypatch):
     assert saved["sha256"] == hashlib.sha256(data).hexdigest()
     assert (cfg.backup_root / "alice" / saved["rel_path"]).read_bytes() == data
 
+
+def test_failure_after_retries_is_summarized(db, cfg, account, library, monkeypatch):
+    monkeypatch.setattr("icloud_photo_vault.backup.RETRY_DELAYS", (0, 0))
+    for i in range(5):
+        make_asset(library, f"a{i}", f"IMG_000{i}.HEIC", datetime(2023, 5, 12, tzinfo=UTC))
+        library.flaky[(f"a{i}", "original")] = 3
+
+    result = sync(db, cfg, account, library)
+
+    assert result.failed == 5 and result.errors[0] == "IMG_0000.HEIC：模拟网络中断"
+    with db.connect() as conn:
+        error = conn.execute("SELECT last_sync_error FROM accounts").fetchone()[0]
+    assert error.startswith("5 张照片没有备份成功，下次同步会自动重试：IMG_0000.HEIC：模拟网络中断；")
+    assert error.endswith("等")
+    # 下一次同步时网络恢复，补齐后不再显示问题
+    sync(db, cfg, account, library)
+    with db.connect() as conn:
+        assert conn.execute("SELECT last_sync_error FROM accounts").fetchone()[0] is None
