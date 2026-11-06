@@ -26,6 +26,8 @@ WITH f AS (
            ON m.account_id = f.account_id AND m.month = a.month AND m.rel_path = f.rel_path
     WHERE f.account_id = :account AND f.sha256 IS NOT NULL
       AND (f.role = 'xmp' OR f.size = f.expected_size)
+      -- 只算照片现在应有的文件：编辑在 iCloud 里被还原后，旧编辑版的记录还在，但不算数
+      AND INSTR(',' || a.roles || ',', ',' || f.role || ',') > 0
     GROUP BY f.account_id, f.asset_id
 )
 SELECT a.month AS month,

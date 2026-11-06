@@ -64,3 +64,22 @@ def test_invalidate_recomputes_and_drops_older_refresh(calls):
     calls["gate"] = None
     before = calls["n"]
     assert cache.get(1, "c")[0]["n"] == before + 1
+
+
+def test_reverted_edit_does_not_count_as_missing(db, cfg, account, library):
+    from datetime import UTC, datetime
+
+    from conftest import make_asset
+
+    from icloud_photo_vault.backup import sync_account
+
+    asset = make_asset(
+        library, "a1", "IMG_0001.HEIC", datetime(2023, 5, 12, tzinfo=UTC), {"original": "HEIC", "adjusted": "JPG"}
+    )
+    sync_account(db, cfg.backup_root, cfg.timezone, account, library)
+    # 编辑在 iCloud 里被还原：编辑版没有了，NAS 上旧编辑版的记录还在
+    del asset.versions["adjusted"]
+    sync_account(db, cfg.backup_root, cfg.timezone, account, library)
+    with db.connect() as conn:
+        row = stats.month_stats(conn, account["id"])[0]
+    assert (row["in_icloud"], row["backed_up"]) == (1, 1)
