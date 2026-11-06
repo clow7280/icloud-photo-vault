@@ -1,6 +1,6 @@
 [project]
 name = "icloud-photo-vault"
-version = "0.1.6"
+version = "0.1.7"
 description = "把多个 iCloud 账号的照片备份到 NAS，加密归档，并按规则释放 iCloud 空间"
 readme = "README.md"
 license = "MIT"
