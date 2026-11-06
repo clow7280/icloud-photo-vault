@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from icloud_photo_vault.accounts import normalize_apple_id
 from icloud_photo_vault.source import FakeBackend
-from icloud_photo_vault.web.app import create_app, library_progress, month_ranges
+from icloud_photo_vault.web.app import create_app, library_progress, month_ranges, percent
 
 
 @pytest.fixture
@@ -407,6 +407,12 @@ def test_cleanup_page_does_not_offer_undated_photos(client):
     assert "没有拍摄日期，不能删除" in page
     dated = sum(r["backed_up"] for r in rows if r["month"] != "unknown")
     assert f"{dated} 张已备份到 NAS" in page
+
+
+def test_percent_never_rounds_up_to_full():
+    assert (percent(78871, 78893), percent(5, 5), percent(1, 3), percent(7, 10), percent(0, 0)) == (
+        "99.9%", "100.0%", "33.3%", "70.0%", "—"
+    )
 
 
 def test_next_run_waits_for_current_cycle(client):

@@ -83,6 +83,14 @@ def library_progress(accounts: list, stats: list[dict]) -> dict:
     }
 
 
+def percent(part: int, whole: int) -> str:
+    """保留一位小数并向下取整，还有没备份的照片时不会显示成 100.0%。"""
+    if not whole:
+        return "—"
+    tenths = 1000 * part // whole  # 整数运算，避免浮点误差把 70.0% 算成 69.9%
+    return f"{tenths // 10}.{tenths % 10}%"
+
+
 def human_bytes(value: int | None) -> str:
     size = float(value or 0)
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -140,6 +148,7 @@ def create_app(cfg: Config, backend: Backend | None = None, start_scheduler: boo
                 return HTMLResponse("只有 NAS 管理员可以使用 iCloud 照片保管库。", status_code=403)
             return await call_next(request)
     TEMPLATES.env.filters["bytes"] = human_bytes
+    TEMPLATES.env.filters["percent"] = percent
     TEMPLATES.env.filters["local"] = make_local_time(cfg)
     TEMPLATES.env.filters["month_ranges"] = month_ranges
 

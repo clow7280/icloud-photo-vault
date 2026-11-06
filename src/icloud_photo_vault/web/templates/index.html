@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% macro pct(part, whole) %}{{ ((100 * part / whole) | round(1) ~ "%") if whole else "—" }}{% endmacro %}
+{% macro pct(part, whole) %}{{ part | percent(whole) }}{% endmacro %}
 {% block content %}
 <div class="page-head">
   <div>
